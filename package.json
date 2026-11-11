@@ -1,0 +1,36 @@
+{
+  "name": "proofpr",
+  "version": "0.1.0",
+  "description": "Stop AI-slop pull requests without punishing honest contributors. A GitHub Action that checks PRs against your repo policy and explains what to fix.",
+  "main": "lib/action.js",
+  "scripts": {
+    "build": "tsc && ncc build src/main.ts -o dist --license licenses.txt",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "github-action",
+    "pull-request",
+    "ai-slop",
+    "maintainers",
+    "open-source",
+    "code-review",
+    "triage"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.1",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@vercel/ncc": "^0.38.4",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

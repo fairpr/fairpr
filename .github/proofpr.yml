@@ -1,0 +1,3 @@
+ai_policy: allowed_with_disclosure
+require_tests_for_code_changes: true
+max_changed_lines: 600

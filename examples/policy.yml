@@ -1,0 +1,23 @@
+# .github/proofpr.yml
+# Your repository's contribution policy. Every setting is optional.
+# ProofPR always reads this file from your default branch, so PRs cannot change it.
+
+# allowed | allowed_with_disclosure | not_allowed
+ai_policy: allowed_with_disclosure
+
+require_linked_issue: false
+require_tests_for_code_changes: false
+max_changed_lines: 800        # lockfiles and generated files are not counted
+max_changed_files: 30
+min_description_length: 40
+
+# label: comment + labels | comment: comment only | dry-run: just log (good for trying it out)
+mode: label
+
+# Never checked: bots are always skipped. Add trusted people here.
+allowlist: []
+skip_maintainers: true
+skip_returning_contributors: true
+
+# Paths not counted for size and test rules
+ignore_paths: ["docs/"]
