@@ -48,6 +48,7 @@ export function renderComment(report: Report, policy: Policy, author: string): s
     '',
     '- Updated your PR? Comment `/proofpr recheck`.',
     '- Maintainers can override with `/proofpr approve`.',
+    '- Contributors can run the same checks before opening a PR: `npx proofpr check`.',
     '',
     '</details>',
     '',

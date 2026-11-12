@@ -16,6 +16,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: dist/ must be committed and up to date
-        run: git diff --exit-code -- dist/ || (echo "Run 'npm run build' and commit dist/" && exit 1)
-      - run: node test/e2e/mock-github.mjs
+      - name: dist/ and bin/ must be committed and up to date
+        run: git diff --exit-code -- dist/ bin/ || (echo "Run 'npm run build' and commit dist/ and bin/" && exit 1)
+      - run: npm run e2e

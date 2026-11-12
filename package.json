@@ -1,12 +1,15 @@
 {
   "name": "proofpr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Stop AI-slop pull requests without punishing honest contributors. A GitHub Action that checks PRs against your repo policy and explains what to fix.",
   "main": "lib/action.js",
   "scripts": {
-    "build": "tsc && ncc build src/main.ts -o dist --license licenses.txt",
+    "build": "npm run build:action && npm run build:cli",
+    "build:action": "tsc --noEmit && ncc build src/main.ts -o dist --license licenses.txt",
+    "build:cli": "ncc build src/cli/bin.ts -o .cli-build && node scripts/finish-cli.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "node test/e2e/mock-github.mjs && node test/e2e/cli.mjs"
   },
   "keywords": [
     "github-action",
@@ -32,5 +35,21 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "bin": {
+    "proofpr": "bin/proofpr.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/proofpr/proofpr.git"
+  },
+  "homepage": "https://github.com/proofpr/proofpr#readme",
+  "bugs": {
+    "url": "https://github.com/proofpr/proofpr/issues"
   }
 }

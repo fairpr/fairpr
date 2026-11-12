@@ -30,6 +30,8 @@ export interface Policy {
   skip_returning_contributors: boolean;
   /** Extra glob-like path prefixes ignored for size/test checks (e.g. "docs/"). */
   ignore_paths: string[];
+  /** Command the contributor CLI runs before creating a proof (e.g. "npm test"). Never run by the Action. */
+  test_command: string;
   /** Label names. */
   labels: { verified: string; needs_info: string; quarantine: string };
 }
@@ -48,6 +50,7 @@ export const DEFAULT_POLICY: Policy = {
   skip_maintainers: true,
   skip_returning_contributors: true,
   ignore_paths: [],
+  test_command: '',
   labels: {
     verified: 'proofpr: verified',
     needs_info: 'proofpr: needs info',
@@ -116,6 +119,10 @@ export function parsePolicy(yamlText: string | undefined): { policy: Policy; war
   (['require_linked_issue', 'require_tests_for_code_changes', 'skip_maintainers', 'skip_returning_contributors'] as const).forEach(bool);
   (['max_changed_lines', 'max_changed_files', 'min_description_length', 'new_account_days', 'spray_threshold'] as const).forEach(num);
   (['allowlist', 'ignore_paths'] as const).forEach(strList);
+  if (r.test_command !== undefined) {
+    if (typeof r.test_command !== 'string') throw new PolicyError('"test_command" must be a string, e.g. "npm test".');
+    policy.test_command = r.test_command.trim();
+  }
 
   if (r.labels !== undefined) {
     if (typeof r.labels !== 'object' || r.labels === null || Array.isArray(r.labels)) {

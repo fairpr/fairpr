@@ -30729,10 +30729,9 @@ function commentStyle(p) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readFile = readFile;
-exports.reqName = reqName;
-exports.pyprojectDeps = pyprojectDeps;
+exports.apiReader = apiReader;
 exports.buildContext = buildContext;
-const files_1 = __nccwpck_require__(9148);
+const manifests_1 = __nccwpck_require__(8977);
 const MAINTAINER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const RETURNING_ASSOCIATIONS = new Set(['CONTRIBUTOR', ...MAINTAINER_ASSOCIATIONS]);
 /** Read a text file from the repo at a given ref. Returns undefined if missing. */
@@ -30750,170 +30749,20 @@ async function readFile(octokit, r, path, ref) {
         throw e;
     }
 }
-async function listTree(octokit, r, sha) {
-    try {
-        const res = await octokit.rest.git.getTree({ ...r, tree_sha: sha });
-        return res.data.tree.map((t) => ({ path: t.path ?? '', type: t.type ?? '' }));
-    }
-    catch {
-        return [];
-    }
-}
-function stripJsonComments(text) {
-    return text.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str ?? '').replace(/,(\s*[}\]])/g, '$1');
-}
-function parseJson(text) {
-    if (!text)
-        return undefined;
-    try {
-        return JSON.parse(stripJsonComments(text));
-    }
-    catch {
-        return undefined;
-    }
-}
-/** Requirement line -> distribution name ("requests>=2; python_version<'3.9'" -> "requests"). */
-function reqName(line) {
-    const l = line.split('#')[0].trim();
-    if (!l || l.startsWith('-') || l.includes('://'))
-        return undefined;
-    const m = l.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)/);
-    return m?.[1];
-}
-/** Very small TOML reader for dependency names in pyproject.toml (PEP 621 + Poetry). */
-function pyprojectDeps(text) {
-    const out = [];
-    // PEP 621: dependencies = [ "x>=1", ... ] and optional-dependencies groups
-    for (const arr of text.matchAll(/^\s*[\w-]*dependencies\s*=\s*\[([\s\S]*?)\]/gm)) {
-        for (const s of arr[1].matchAll(/["']([^"']+)["']/g)) {
-            const n = reqName(s[1]);
-            if (n)
-                out.push(n);
-        }
-    }
-    // Optional dependency groups: [project.optional-dependencies] name = ["..."]
-    const optSection = text.match(/\[project\.optional-dependencies\]([\s\S]*?)(\n\[|$)/);
-    if (optSection) {
-        for (const s of optSection[1].matchAll(/["']([^"']+)["']/g)) {
-            const n = reqName(s[1]);
-            if (n)
-                out.push(n);
-        }
-    }
-    // Poetry / PDM style tables: [tool.poetry.dependencies], [tool.poetry.group.dev.dependencies]
-    for (const sec of text.matchAll(/\[tool\.[\w.-]*dependencies\]([\s\S]*?)(?=\n\[|$)/g)) {
-        for (const line of sec[1].split('\n')) {
-            const m = line.match(/^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/);
-            if (m && m[1].toLowerCase() !== 'python')
-                out.push(m[1]);
-        }
-    }
-    return out;
-}
-async function loadManifests(octokit, r, headSha, files) {
-    const manifests = {};
-    const changed = files.filter((f) => f.status !== 'removed').map((f) => f.filename);
-    const jsFiles = changed.filter((p) => ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'].includes((0, files_1.ext)(p)));
-    const pyFiles = changed.filter((p) => (0, files_1.ext)(p) === 'py');
-    const rootTree = jsFiles.length || pyFiles.length ? await listTree(octokit, r, headSha) : [];
-    const rootNames = new Set(rootTree.map((t) => t.path));
-    // ---- npm: nearest package.json for each changed file, plus the root one
-    if (jsFiles.length) {
-        const candidates = new Set(['package.json']);
-        for (const p of jsFiles) {
-            const parts = p.split('/').slice(0, -1);
-            for (let i = parts.length; i > 0; i--)
-                candidates.add(`${parts.slice(0, i).join('/')}/package.json`);
-        }
-        const deps = new Set();
-        let found = 0;
-        let root;
-        for (const path of [...candidates].slice(0, 20)) {
-            const pkg = parseJson(await readFile(octokit, r, path, headSha));
-            if (!pkg)
-                continue;
-            found++;
-            if (path === 'package.json')
-                root = pkg;
-            if (typeof pkg.name === 'string')
-                deps.add(pkg.name);
-            for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
-                const section = pkg[key];
-                if (section && typeof section === 'object')
-                    Object.keys(section).forEach((d) => deps.add(d));
+/** RepoReader backed by the GitHub API at a fixed commit. */
+function apiReader(octokit, r, sha) {
+    return {
+        read: (path) => readFile(octokit, r, path, sha),
+        async list(dir) {
+            try {
+                const res = await octokit.rest.git.getTree({ ...r, tree_sha: dir ? `${sha}:${dir}` : sha });
+                return res.data.tree.map((t) => ({ path: t.path ?? '', type: t.type ?? '' }));
             }
-        }
-        if (found > 0) {
-            manifests.npm = deps;
-            manifests.npmIncomplete =
-                !!root?.workspaces || rootNames.has('pnpm-workspace.yaml') || rootNames.has('lerna.json') || rootNames.has('nx.json') || rootNames.has('turbo.json');
-            const tsconfig = parseJson(await readFile(octokit, r, 'tsconfig.json', headSha));
-            const aliases = Object.keys(tsconfig?.compilerOptions?.paths ?? {});
-            // baseUrl "." or "src" makes bare imports of local folders valid ("components/Button").
-            if (tsconfig?.compilerOptions?.baseUrl) {
-                for (const t of rootTree)
-                    if (t.type === 'tree')
-                        aliases.push(`${t.path}/*`);
-                if (tsconfig.compilerOptions.baseUrl.replace(/^\.\//, '') === 'src') {
-                    for (const t of await listTree(octokit, r, `${headSha}:src`))
-                        if (t.type === 'tree')
-                            aliases.push(`${t.path}/*`);
-                }
+            catch {
+                return [];
             }
-            manifests.jsAliases = aliases;
-        }
-    }
-    // ---- python
-    if (pyFiles.length) {
-        const deps = new Set();
-        let sawManifest = false;
-        for (const t of rootTree) {
-            if (t.type === 'blob' && /^requirements.*\.(txt|in)$/i.test(t.path)) {
-                const text = await readFile(octokit, r, t.path, headSha);
-                if (text) {
-                    sawManifest = true;
-                    text.split('\n').map(reqName).forEach((n) => n && deps.add(n));
-                }
-            }
-        }
-        const pyproject = rootNames.has('pyproject.toml') ? await readFile(octokit, r, 'pyproject.toml', headSha) : undefined;
-        if (pyproject) {
-            sawManifest = true;
-            pyprojectDeps(pyproject).forEach((n) => deps.add(n));
-        }
-        const setupCfg = rootNames.has('setup.cfg') ? await readFile(octokit, r, 'setup.cfg', headSha) : undefined;
-        if (setupCfg) {
-            const m = setupCfg.match(/install_requires\s*=([\s\S]*?)(\n\S|\n\[|$)/);
-            if (m) {
-                sawManifest = true;
-                m[1].split('\n').map(reqName).forEach((n) => n && deps.add(n));
-            }
-        }
-        if (sawManifest || rootNames.has('setup.py')) {
-            manifests.python = deps;
-            manifests.pythonIncomplete = rootNames.has('setup.py') || rootNames.has('Pipfile') || rootNames.has('environment.yml');
-            const local = new Set();
-            const addTree = (tree) => {
-                for (const t of tree) {
-                    if (t.type === 'tree')
-                        local.add(t.path);
-                    else if (t.path.endsWith('.py'))
-                        local.add(t.path.slice(0, -3));
-                }
-            };
-            addTree(rootTree);
-            if (rootNames.has('src'))
-                addTree(await listTree(octokit, r, `${headSha}:src`));
-            // Modules inside the changed files' own folders (scripts importing siblings).
-            for (const p of pyFiles) {
-                const dir = p.split('/').slice(0, -1).join('/');
-                if (dir)
-                    addTree(await listTree(octokit, r, `${headSha}:${dir}`));
-            }
-            manifests.pythonLocalModules = local;
-        }
-    }
-    return manifests;
+        },
+    };
 }
 async function countRecentPrs(octokit, login) {
     try {
@@ -30950,7 +30799,7 @@ async function buildContext(octokit, r, prNumber) {
     const [age, recent, manifests] = await Promise.all([
         accountAgeDays(octokit, login),
         countRecentPrs(octokit, login),
-        loadManifests(octokit, r, pr.head.sha, files),
+        (0, manifests_1.loadManifests)(apiReader(octokit, r, pr.head.sha), files),
     ]);
     return {
         headSha: pr.head.sha,
@@ -31120,6 +30969,172 @@ function pyImportKnown(top, deps, localModules) {
 
 /***/ }),
 
+/***/ 8977:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseJson = parseJson;
+exports.reqName = reqName;
+exports.pyprojectDeps = pyprojectDeps;
+exports.loadManifests = loadManifests;
+const files_1 = __nccwpck_require__(9148);
+const JS_EXTS = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'];
+function stripJsonComments(text) {
+    return text.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) => str ?? '').replace(/,(\s*[}\]])/g, '$1');
+}
+function parseJson(text) {
+    if (!text)
+        return undefined;
+    try {
+        return JSON.parse(stripJsonComments(text));
+    }
+    catch {
+        return undefined;
+    }
+}
+/** Requirement line -> distribution name ("requests>=2; python_version<'3.9'" -> "requests"). */
+function reqName(line) {
+    const l = line.split('#')[0].trim();
+    if (!l || l.startsWith('-') || l.includes('://'))
+        return undefined;
+    const m = l.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)/);
+    return m?.[1];
+}
+/** Small reader for dependency names in pyproject.toml (PEP 621 + Poetry/PDM tables). */
+function pyprojectDeps(text) {
+    const out = [];
+    for (const arr of text.matchAll(/^\s*[\w-]*dependencies\s*=\s*\[([\s\S]*?)\]/gm)) {
+        for (const s of arr[1].matchAll(/["']([^"']+)["']/g)) {
+            const n = reqName(s[1]);
+            if (n)
+                out.push(n);
+        }
+    }
+    const optSection = text.match(/\[project\.optional-dependencies\]([\s\S]*?)(\n\[|$)/);
+    if (optSection) {
+        for (const s of optSection[1].matchAll(/["']([^"']+)["']/g)) {
+            const n = reqName(s[1]);
+            if (n)
+                out.push(n);
+        }
+    }
+    for (const sec of text.matchAll(/\[tool\.[\w.-]*dependencies\]([\s\S]*?)(?=\n\[|$)/g)) {
+        for (const line of sec[1].split('\n')) {
+            const m = line.match(/^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/);
+            if (m && m[1].toLowerCase() !== 'python')
+                out.push(m[1]);
+        }
+    }
+    return out;
+}
+async function loadManifests(reader, files) {
+    const manifests = {};
+    const changed = files.filter((f) => f.status !== 'removed').map((f) => f.filename);
+    const jsFiles = changed.filter((p) => JS_EXTS.includes((0, files_1.ext)(p)));
+    const pyFiles = changed.filter((p) => (0, files_1.ext)(p) === 'py');
+    if (!jsFiles.length && !pyFiles.length)
+        return manifests;
+    const rootTree = await reader.list('');
+    const rootNames = new Set(rootTree.map((t) => t.path));
+    // ---- npm: nearest package.json for each changed file, plus the root one
+    if (jsFiles.length) {
+        const candidates = new Set(['package.json']);
+        for (const p of jsFiles) {
+            const parts = p.split('/').slice(0, -1);
+            for (let i = parts.length; i > 0; i--)
+                candidates.add(`${parts.slice(0, i).join('/')}/package.json`);
+        }
+        const deps = new Set();
+        let found = 0;
+        let root;
+        for (const path of [...candidates].slice(0, 20)) {
+            const pkg = parseJson(await reader.read(path));
+            if (!pkg)
+                continue;
+            found++;
+            if (path === 'package.json')
+                root = pkg;
+            if (typeof pkg.name === 'string')
+                deps.add(pkg.name);
+            for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+                const section = pkg[key];
+                if (section && typeof section === 'object')
+                    Object.keys(section).forEach((d) => deps.add(d));
+            }
+        }
+        if (found > 0) {
+            manifests.npm = deps;
+            manifests.npmIncomplete =
+                !!root?.workspaces || ['pnpm-workspace.yaml', 'lerna.json', 'nx.json', 'turbo.json'].some((n) => rootNames.has(n));
+            const tsconfig = parseJson(await reader.read('tsconfig.json'));
+            const aliases = Object.keys(tsconfig?.compilerOptions?.paths ?? {});
+            const baseUrl = tsconfig?.compilerOptions?.baseUrl?.replace(/^\.\//, '').replace(/\/$/, '');
+            if (baseUrl !== undefined) {
+                const dir = baseUrl === '.' ? '' : baseUrl;
+                for (const t of dir === '' ? rootTree : await reader.list(dir))
+                    if (t.type === 'tree')
+                        aliases.push(`${t.path}/*`);
+            }
+            manifests.jsAliases = aliases;
+        }
+    }
+    // ---- python
+    if (pyFiles.length) {
+        const deps = new Set();
+        let sawManifest = false;
+        for (const t of rootTree) {
+            if (t.type === 'blob' && /^requirements.*\.(txt|in)$/i.test(t.path)) {
+                const text = await reader.read(t.path);
+                if (text) {
+                    sawManifest = true;
+                    text.split('\n').map(reqName).forEach((n) => n && deps.add(n));
+                }
+            }
+        }
+        if (rootNames.has('pyproject.toml')) {
+            const pyproject = await reader.read('pyproject.toml');
+            if (pyproject) {
+                sawManifest = true;
+                pyprojectDeps(pyproject).forEach((n) => deps.add(n));
+            }
+        }
+        if (rootNames.has('setup.cfg')) {
+            const setupCfg = await reader.read('setup.cfg');
+            const m = setupCfg?.match(/install_requires\s*=([\s\S]*?)(\n\S|\n\[|$)/);
+            if (m) {
+                sawManifest = true;
+                m[1].split('\n').map(reqName).forEach((n) => n && deps.add(n));
+            }
+        }
+        if (sawManifest || rootNames.has('setup.py')) {
+            manifests.python = deps;
+            manifests.pythonIncomplete = ['setup.py', 'Pipfile', 'environment.yml'].some((n) => rootNames.has(n));
+            const local = new Set();
+            const addTree = (tree) => {
+                for (const t of tree) {
+                    if (t.type === 'tree')
+                        local.add(t.path);
+                    else if (t.path.endsWith('.py'))
+                        local.add(t.path.slice(0, -3));
+                }
+            };
+            addTree(rootTree);
+            if (rootNames.has('src'))
+                addTree(await reader.list('src'));
+            for (const dir of new Set(pyFiles.map((p) => p.split('/').slice(0, -1).join('/')).filter(Boolean))) {
+                addTree(await reader.list(dir));
+            }
+            manifests.pythonLocalModules = local;
+        }
+    }
+    return manifests;
+}
+
+
+/***/ }),
+
 /***/ 3618:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -31143,6 +31158,7 @@ exports.DEFAULT_POLICY = {
     skip_maintainers: true,
     skip_returning_contributors: true,
     ignore_paths: [],
+    test_command: '',
     labels: {
         verified: 'proofpr: verified',
         needs_info: 'proofpr: needs info',
@@ -31217,6 +31233,11 @@ function parsePolicy(yamlText) {
     ['require_linked_issue', 'require_tests_for_code_changes', 'skip_maintainers', 'skip_returning_contributors'].forEach(bool);
     ['max_changed_lines', 'max_changed_files', 'min_description_length', 'new_account_days', 'spray_threshold'].forEach(num);
     ['allowlist', 'ignore_paths'].forEach(strList);
+    if (r.test_command !== undefined) {
+        if (typeof r.test_command !== 'string')
+            throw new PolicyError('"test_command" must be a string, e.g. "npm test".');
+        policy.test_command = r.test_command.trim();
+    }
     if (r.labels !== undefined) {
         if (typeof r.labels !== 'object' || r.labels === null || Array.isArray(r.labels)) {
             throw new PolicyError('"labels" must be a mapping with verified / needs_info / quarantine.');
@@ -31324,7 +31345,7 @@ function renderComment(report, policy, author) {
     if (hints.length) {
         lines.push('<details><summary>Notes for reviewers (do not affect the result)</summary>', '', ...hints.map(renderFinding), '', '</details>', '');
     }
-    lines.push('<details><summary>How this works</summary>', '', `Checks passed: ${report.passed.length ? report.passed.map((p) => `\`${p}\``).join(', ') : 'none'}.`, report.skipped.length ? `Skipped: ${report.skipped.map((s) => `\`${s.id}\``).join(', ')}.` : '', '', `Repository policy: AI contributions are **${policy.ai_policy.replace(/_/g, ' ')}**.`, '', '- Updated your PR? Comment `/proofpr recheck`.', '- Maintainers can override with `/proofpr approve`.', '', '</details>', '', '<sub>[ProofPR](https://github.com/proofpr/proofpr): fair PR checks for the AI era</sub>');
+    lines.push('<details><summary>How this works</summary>', '', `Checks passed: ${report.passed.length ? report.passed.map((p) => `\`${p}\``).join(', ') : 'none'}.`, report.skipped.length ? `Skipped: ${report.skipped.map((s) => `\`${s.id}\``).join(', ')}.` : '', '', `Repository policy: AI contributions are **${policy.ai_policy.replace(/_/g, ' ')}**.`, '', '- Updated your PR? Comment `/proofpr recheck`.', '- Maintainers can override with `/proofpr approve`.', '- Contributors can run the same checks before opening a PR: `npx proofpr check`.', '', '</details>', '', '<sub>[ProofPR](https://github.com/proofpr/proofpr): fair PR checks for the AI era</sub>');
     return lines.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
 }
 function renderSkipComment(reason) {
