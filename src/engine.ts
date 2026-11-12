@@ -59,7 +59,7 @@ export function evaluate(ctx: PrContext, policy: Policy): Report {
       id: 'proof', kind: 'hint',
       title: 'Self-check proof is out of date',
       detail: proof.reason ?? 'The proof could not be verified.',
-      fix: 'Run the ProofPR self-check again and paste the new result into the description.',
+      fix: 'Run the FairPR self-check again and paste the new result into the description.',
     });
   }
 

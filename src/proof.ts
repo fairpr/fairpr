@@ -15,14 +15,14 @@ export function fingerprint(files: Pick<ChangedFile, 'filename' | 'status' | 'sh
   return 'sha256:' + createHash('sha256').update(lines.join('\n')).digest('hex');
 }
 
-const PROOF_RE = /<!--\s*proofpr:proof\s+v1\s+fingerprint:\s*(sha256:[a-f0-9]{64})\s*-->/i;
+const PROOF_RE = /<!--\s*fairpr:proof\s+v1\s+fingerprint:\s*(sha256:[a-f0-9]{64})\s*-->/i;
 
 export function extractProof(body: string): string | undefined {
   return body.match(PROOF_RE)?.[1];
 }
 
 export function proofMarker(fp: string): string {
-  return `<!-- proofpr:proof v1 fingerprint: ${fp} -->`;
+  return `<!-- fairpr:proof v1 fingerprint: ${fp} -->`;
 }
 
 export function verifyProof(body: string, files: ChangedFile[]): ProofResult {

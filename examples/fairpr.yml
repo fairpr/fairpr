@@ -1,0 +1,28 @@
+# .github/workflows/fairpr.yml
+# Copy this file into your repository at .github/workflows/fairpr.yml
+name: FairPR
+
+on:
+  # pull_request_target runs in the context of YOUR repo so it can comment on PRs
+  # from forks. FairPR never checks out or runs the PR's code, which is what
+  # makes this trigger safe here. Do not add a checkout step to this workflow.
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: fairpr-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  fairpr:
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/fairpr'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: fairpr/fairpr@v0

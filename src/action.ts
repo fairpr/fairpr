@@ -8,12 +8,12 @@ import type { Report, Verdict } from './types';
 
 type Octokit = ReturnType<typeof github.getOctokit>;
 
-const APPROVAL_RE = /<!-- proofpr:approved-by:([\w-]+) -->/;
+const APPROVAL_RE = /<!-- fairpr:approved-by:([\w-]+) -->/;
 const LABEL_COLORS: Record<Verdict, string> = { verified: '2da44e', 'needs-info': 'd4a72c', quarantine: '8250df' };
 const LABEL_DESCRIPTIONS: Record<Verdict, string> = {
-  verified: 'ProofPR: follows the contribution policy',
-  'needs-info': 'ProofPR: contributor needs to fix a few things',
-  quarantine: 'ProofPR: waiting for a maintainer to look at it',
+  verified: 'FairPR: follows the contribution policy',
+  'needs-info': 'FairPR: contributor needs to fix a few things',
+  quarantine: 'FairPR: waiting for a maintainer to look at it',
 };
 
 function labelFor(policy: Policy, v: Verdict): string {
@@ -78,7 +78,7 @@ async function loadPolicy(octokit: Octokit, r: RepoRef, configPath: string, base
 }
 
 async function writeSummary(report: Report | undefined, prNumber: number, note: string) {
-  const s = core.summary.addHeading(`ProofPR: PR #${prNumber}`, 3);
+  const s = core.summary.addHeading(`FairPR: PR #${prNumber}`, 3);
   if (report) {
     s.addRaw(`**Verdict:** ${report.verdict}\n\n`);
     if (report.findings.length) {
@@ -113,7 +113,7 @@ async function check(octokit: Octokit, r: RepoRef, prNumber: number, configPath:
 
   let body = renderComment({ ...report, verdict: finalVerdict }, policy, ctx.author.login);
   if (approver) {
-    body = body.replace(COMMENT_MARKER, `${COMMENT_MARKER}\n<!-- proofpr:approved-by:${approver} -->`);
+    body = body.replace(COMMENT_MARKER, `${COMMENT_MARKER}\n<!-- fairpr:approved-by:${approver} -->`);
     body += `\n\n> ✔️ Approved for review by @${approver}.`;
   }
 
@@ -129,7 +129,7 @@ async function check(octokit: Octokit, r: RepoRef, prNumber: number, configPath:
   if (policy.mode === 'label') await applyLabel(octokit, r, prNumber, policy, finalVerdict);
 
   if (finalVerdict === 'quarantine' && core.getBooleanInput('fail-on-quarantine')) {
-    core.setFailed('ProofPR placed this PR on hold. See the PR comment for details.');
+    core.setFailed('FairPR placed this PR on hold. See the PR comment for details.');
   }
 }
 
@@ -142,17 +142,17 @@ async function handleCommand(octokit: Octokit, r: RepoRef, configPath: string) {
   const commenter = String(comment.user?.login ?? '');
   if (comment.user?.type === 'Bot') return;
 
-  if (/^\/proofpr\s+recheck\b/i.test(text)) {
+  if (/^\/fairpr\s+recheck\b/i.test(text)) {
     await check(octokit, r, issue.number, configPath);
     await octokit.rest.reactions.createForIssueComment({ ...r, comment_id: comment.id, content: 'rocket' }).catch(() => undefined);
     return;
   }
 
-  if (/^\/proofpr\s+approve\b/i.test(text)) {
+  if (/^\/fairpr\s+approve\b/i.test(text)) {
     const { data } = await octokit.rest.repos.getCollaboratorPermissionLevel({ ...r, username: commenter });
     if (!['admin', 'maintain', 'write'].includes(data.permission)) {
       await octokit.rest.reactions.createForIssueComment({ ...r, comment_id: comment.id, content: 'confused' }).catch(() => undefined);
-      core.info(`@${commenter} does not have write access; ignoring /proofpr approve.`);
+      core.info(`@${commenter} does not have write access; ignoring /fairpr approve.`);
       return;
     }
     await check(octokit, r, issue.number, configPath, commenter);
@@ -163,7 +163,7 @@ async function handleCommand(octokit: Octokit, r: RepoRef, configPath: string) {
 export async function run(): Promise<void> {
   try {
     const token = core.getInput('github-token', { required: true });
-    const configPath = core.getInput('config-path') || '.github/proofpr.yml';
+    const configPath = core.getInput('config-path') || '.github/fairpr.yml';
     const octokit = github.getOctokit(token);
     const r: RepoRef = github.context.repo;
     const event = github.context.eventName;
@@ -179,7 +179,7 @@ export async function run(): Promise<void> {
     } else if (event === 'issue_comment') {
       await handleCommand(octokit, r, configPath);
     } else {
-      core.info(`ProofPR does nothing on "${event}" events.`);
+      core.info(`FairPR does nothing on "${event}" events.`);
     }
   } catch (e) {
     if (e instanceof PolicyError) {
@@ -187,7 +187,7 @@ export async function run(): Promise<void> {
       return;
     }
     // Never block contributors because of our own bugs or API hiccups.
-    core.warning(`ProofPR could not complete: ${(e as Error).message}`);
+    core.warning(`FairPR could not complete: ${(e as Error).message}`);
   }
 }
 

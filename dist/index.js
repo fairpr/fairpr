@@ -29968,12 +29968,12 @@ const policy_1 = __nccwpck_require__(3618);
 const github_1 = __nccwpck_require__(9248);
 const engine_1 = __nccwpck_require__(825);
 const render_1 = __nccwpck_require__(7055);
-const APPROVAL_RE = /<!-- proofpr:approved-by:([\w-]+) -->/;
+const APPROVAL_RE = /<!-- fairpr:approved-by:([\w-]+) -->/;
 const LABEL_COLORS = { verified: '2da44e', 'needs-info': 'd4a72c', quarantine: '8250df' };
 const LABEL_DESCRIPTIONS = {
-    verified: 'ProofPR: follows the contribution policy',
-    'needs-info': 'ProofPR: contributor needs to fix a few things',
-    quarantine: 'ProofPR: waiting for a maintainer to look at it',
+    verified: 'FairPR: follows the contribution policy',
+    'needs-info': 'FairPR: contributor needs to fix a few things',
+    quarantine: 'FairPR: waiting for a maintainer to look at it',
 };
 function labelFor(policy, v) {
     return v === 'verified' ? policy.labels.verified : v === 'needs-info' ? policy.labels.needs_info : policy.labels.quarantine;
@@ -30039,7 +30039,7 @@ async function loadPolicy(octokit, r, configPath, baseRef) {
     return policy;
 }
 async function writeSummary(report, prNumber, note) {
-    const s = core.summary.addHeading(`ProofPR: PR #${prNumber}`, 3);
+    const s = core.summary.addHeading(`FairPR: PR #${prNumber}`, 3);
     if (report) {
         s.addRaw(`**Verdict:** ${report.verdict}\n\n`);
         if (report.findings.length) {
@@ -30070,7 +30070,7 @@ async function check(octokit, r, prNumber, configPath, approvedBy) {
     const finalVerdict = approver ? 'verified' : report.verdict;
     let body = (0, render_1.renderComment)({ ...report, verdict: finalVerdict }, policy, ctx.author.login);
     if (approver) {
-        body = body.replace(render_1.COMMENT_MARKER, `${render_1.COMMENT_MARKER}\n<!-- proofpr:approved-by:${approver} -->`);
+        body = body.replace(render_1.COMMENT_MARKER, `${render_1.COMMENT_MARKER}\n<!-- fairpr:approved-by:${approver} -->`);
         body += `\n\n> ✔️ Approved for review by @${approver}.`;
     }
     core.setOutput('verdict', finalVerdict);
@@ -30084,7 +30084,7 @@ async function check(octokit, r, prNumber, configPath, approvedBy) {
     if (policy.mode === 'label')
         await applyLabel(octokit, r, prNumber, policy, finalVerdict);
     if (finalVerdict === 'quarantine' && core.getBooleanInput('fail-on-quarantine')) {
-        core.setFailed('ProofPR placed this PR on hold. See the PR comment for details.');
+        core.setFailed('FairPR placed this PR on hold. See the PR comment for details.');
     }
 }
 async function handleCommand(octokit, r, configPath) {
@@ -30097,16 +30097,16 @@ async function handleCommand(octokit, r, configPath) {
     const commenter = String(comment.user?.login ?? '');
     if (comment.user?.type === 'Bot')
         return;
-    if (/^\/proofpr\s+recheck\b/i.test(text)) {
+    if (/^\/fairpr\s+recheck\b/i.test(text)) {
         await check(octokit, r, issue.number, configPath);
         await octokit.rest.reactions.createForIssueComment({ ...r, comment_id: comment.id, content: 'rocket' }).catch(() => undefined);
         return;
     }
-    if (/^\/proofpr\s+approve\b/i.test(text)) {
+    if (/^\/fairpr\s+approve\b/i.test(text)) {
         const { data } = await octokit.rest.repos.getCollaboratorPermissionLevel({ ...r, username: commenter });
         if (!['admin', 'maintain', 'write'].includes(data.permission)) {
             await octokit.rest.reactions.createForIssueComment({ ...r, comment_id: comment.id, content: 'confused' }).catch(() => undefined);
-            core.info(`@${commenter} does not have write access; ignoring /proofpr approve.`);
+            core.info(`@${commenter} does not have write access; ignoring /fairpr approve.`);
             return;
         }
         await check(octokit, r, issue.number, configPath, commenter);
@@ -30116,7 +30116,7 @@ async function handleCommand(octokit, r, configPath) {
 async function run() {
     try {
         const token = core.getInput('github-token', { required: true });
-        const configPath = core.getInput('config-path') || '.github/proofpr.yml';
+        const configPath = core.getInput('config-path') || '.github/fairpr.yml';
         const octokit = github.getOctokit(token);
         const r = github.context.repo;
         const event = github.context.eventName;
@@ -30134,7 +30134,7 @@ async function run() {
             await handleCommand(octokit, r, configPath);
         }
         else {
-            core.info(`ProofPR does nothing on "${event}" events.`);
+            core.info(`FairPR does nothing on "${event}" events.`);
         }
     }
     catch (e) {
@@ -30143,7 +30143,7 @@ async function run() {
             return;
         }
         // Never block contributors because of our own bugs or API hiccups.
-        core.warning(`ProofPR could not complete: ${e.message}`);
+        core.warning(`FairPR could not complete: ${e.message}`);
     }
 }
 
@@ -30615,7 +30615,7 @@ function evaluate(ctx, policy) {
             id: 'proof', kind: 'hint',
             title: 'Self-check proof is out of date',
             detail: proof.reason ?? 'The proof could not be verified.',
-            fix: 'Run the ProofPR self-check again and paste the new result into the description.',
+            fix: 'Run the FairPR self-check again and paste the new result into the description.',
         });
     }
     return { verdict: decide(findings), findings, passed, skipped, proof };
@@ -31160,9 +31160,9 @@ exports.DEFAULT_POLICY = {
     ignore_paths: [],
     test_command: '',
     labels: {
-        verified: 'proofpr: verified',
-        needs_info: 'proofpr: needs info',
-        quarantine: 'proofpr: quarantine',
+        verified: 'fairpr: verified',
+        needs_info: 'fairpr: needs info',
+        quarantine: 'fairpr: quarantine',
     },
 };
 class PolicyError extends Error {
@@ -31171,7 +31171,7 @@ exports.PolicyError = PolicyError;
 const AI_POLICIES = ['allowed', 'allowed_with_disclosure', 'not_allowed'];
 const MODES = ['label', 'comment', 'dry-run'];
 /**
- * Parse .github/proofpr.yml. Unknown keys are reported (typos are a common
+ * Parse .github/fairpr.yml. Unknown keys are reported (typos are a common
  * source of "why is my rule ignored?"), invalid values throw a clear error.
  */
 function parsePolicy(yamlText) {
@@ -31184,17 +31184,17 @@ function parsePolicy(yamlText) {
         raw = (0, yaml_1.parse)(yamlText);
     }
     catch (e) {
-        throw new PolicyError(`.github/proofpr.yml is not valid YAML: ${e.message}`);
+        throw new PolicyError(`.github/fairpr.yml is not valid YAML: ${e.message}`);
     }
     if (raw === null || raw === undefined)
         return { policy, warnings };
     if (typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new PolicyError('.github/proofpr.yml must be a mapping of settings (key: value).');
+        throw new PolicyError('.github/fairpr.yml must be a mapping of settings (key: value).');
     }
     const r = raw;
     for (const key of Object.keys(r)) {
         if (!(key in exports.DEFAULT_POLICY))
-            warnings.push(`Unknown setting "${key}" in .github/proofpr.yml was ignored.`);
+            warnings.push(`Unknown setting "${key}" in .github/fairpr.yml was ignored.`);
     }
     const bool = (k) => {
         if (r[k] === undefined)
@@ -31281,12 +31281,12 @@ function fingerprint(files) {
         .sort();
     return 'sha256:' + (0, crypto_1.createHash)('sha256').update(lines.join('\n')).digest('hex');
 }
-const PROOF_RE = /<!--\s*proofpr:proof\s+v1\s+fingerprint:\s*(sha256:[a-f0-9]{64})\s*-->/i;
+const PROOF_RE = /<!--\s*fairpr:proof\s+v1\s+fingerprint:\s*(sha256:[a-f0-9]{64})\s*-->/i;
 function extractProof(body) {
     return body.match(PROOF_RE)?.[1];
 }
 function proofMarker(fp) {
-    return `<!-- proofpr:proof v1 fingerprint: ${fp} -->`;
+    return `<!-- fairpr:proof v1 fingerprint: ${fp} -->`;
 }
 function verifyProof(body, files) {
     const claimed = extractProof(body);
@@ -31317,11 +31317,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.COMMENT_MARKER = void 0;
 exports.renderComment = renderComment;
 exports.renderSkipComment = renderSkipComment;
-exports.COMMENT_MARKER = '<!-- proofpr:report -->';
+exports.COMMENT_MARKER = '<!-- fairpr:report -->';
 const HEADLINES = {
-    verified: '✅ **ProofPR: ready for review**',
-    'needs-info': '📝 **ProofPR: a few things to fix before review**',
-    quarantine: '⏸️ **ProofPR: on hold until a maintainer looks at it**',
+    verified: '✅ **FairPR: ready for review**',
+    'needs-info': '📝 **FairPR: a few things to fix before review**',
+    quarantine: '⏸️ **FairPR: on hold until a maintainer looks at it**',
 };
 const INTROS = {
     verified: 'This PR follows the repository\'s contribution policy. Thanks for the contribution!',
@@ -31337,7 +31337,7 @@ function renderComment(report, policy, author) {
     const blocking = report.findings.filter((f) => f.kind !== 'hint');
     const hints = report.findings.filter((f) => f.kind === 'hint');
     if (report.proof?.present && report.proof.valid) {
-        lines.push('🔏 The contributor ran the ProofPR self-check, and it matches the current code.', '');
+        lines.push('🔏 The contributor ran the FairPR self-check, and it matches the current code.', '');
     }
     if (blocking.length) {
         lines.push('#### To fix', ...blocking.map(renderFinding), '');
@@ -31345,11 +31345,11 @@ function renderComment(report, policy, author) {
     if (hints.length) {
         lines.push('<details><summary>Notes for reviewers (do not affect the result)</summary>', '', ...hints.map(renderFinding), '', '</details>', '');
     }
-    lines.push('<details><summary>How this works</summary>', '', `Checks passed: ${report.passed.length ? report.passed.map((p) => `\`${p}\``).join(', ') : 'none'}.`, report.skipped.length ? `Skipped: ${report.skipped.map((s) => `\`${s.id}\``).join(', ')}.` : '', '', `Repository policy: AI contributions are **${policy.ai_policy.replace(/_/g, ' ')}**.`, '', '- Updated your PR? Comment `/proofpr recheck`.', '- Maintainers can override with `/proofpr approve`.', '- Contributors can run the same checks before opening a PR: `npx proofpr check`.', '', '</details>', '', '<sub>[ProofPR](https://github.com/proofpr/proofpr): fair PR checks for the AI era</sub>');
+    lines.push('<details><summary>How this works</summary>', '', `Checks passed: ${report.passed.length ? report.passed.map((p) => `\`${p}\``).join(', ') : 'none'}.`, report.skipped.length ? `Skipped: ${report.skipped.map((s) => `\`${s.id}\``).join(', ')}.` : '', '', `Repository policy: AI contributions are **${policy.ai_policy.replace(/_/g, ' ')}**.`, '', '- Updated your PR? Comment `/fairpr recheck`.', '- Maintainers can override with `/fairpr approve`.', '- Contributors can run the same checks before opening a PR: `npx fairpr check`.', '', '</details>', '', '<sub>[FairPR](https://github.com/fairpr/fairpr): fair PR checks for the AI era</sub>');
     return lines.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
 }
 function renderSkipComment(reason) {
-    return `${exports.COMMENT_MARKER}\n<sub>ProofPR skipped this PR: ${reason}</sub>`;
+    return `${exports.COMMENT_MARKER}\n<sub>FairPR skipped this PR: ${reason}</sub>`;
 }
 
 

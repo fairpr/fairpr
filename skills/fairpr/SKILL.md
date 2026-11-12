@@ -1,9 +1,9 @@
 ---
-name: proofpr
-description: Use before opening a pull request, especially to a project you don't maintain. Checks the change against the project's contribution and AI policy with `npx proofpr check`, fixes what it reports, and writes an honest PR description with a verifiable proof.
+name: fairpr
+description: Use before opening a pull request, especially to a project you don't maintain. Checks the change against the project's contribution and AI policy with `npx fairpr check`, fixes what it reports, and writes an honest PR description with a verifiable proof.
 ---
 
-# ProofPR: open pull requests maintainers will accept
+# FairPR: open pull requests maintainers will accept
 
 Maintainers now receive many low-quality AI-generated PRs and often close them on sight. This skill makes sure a PR you help create is not one of them.
 
@@ -27,7 +27,7 @@ Any time you are about to open a pull request, or the user asks you to "submit",
 
 5. **Run the check:**
    ```bash
-   npx proofpr check --yes --json \
+   npx fairpr check --yes --json \
      --problem "<user's answer>" \
      --change "<user's answer>" \
      --tested "<user's answer>" \
@@ -43,7 +43,7 @@ Any time you are about to open a pull request, or the user asks you to "submit",
 
 7. **Open the PR** with the generated description, unchanged:
    ```bash
-   gh pr create --title "<clear title>" --body-file .git/proofpr/PR_BODY.md
+   gh pr create --title "<clear title>" --body-file .git/fairpr/PR_BODY.md
    ```
    (or run the check again with `--create`).
 
@@ -51,6 +51,6 @@ Any time you are about to open a pull request, or the user asks you to "submit",
 
 ## Rules
 
-- Never edit `.github/proofpr.yml` to make a check pass. ProofPR reads it from the target branch anyway, so edits have no effect.
-- Never remove the `<!-- proofpr:proof ... -->` line from the description.
+- Never edit `.github/fairpr.yml` to make a check pass. FairPR reads it from the target branch anyway, so edits have no effect.
+- Never remove the `<!-- fairpr:proof ... -->` line from the description.
 - Keep PRs small and focused on one change.

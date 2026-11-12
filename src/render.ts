@@ -1,12 +1,12 @@
 import type { Finding, Report } from './types';
 import type { Policy } from './policy';
 
-export const COMMENT_MARKER = '<!-- proofpr:report -->';
+export const COMMENT_MARKER = '<!-- fairpr:report -->';
 
 const HEADLINES: Record<Report['verdict'], string> = {
-  verified: '✅ **ProofPR: ready for review**',
-  'needs-info': '📝 **ProofPR: a few things to fix before review**',
-  quarantine: '⏸️ **ProofPR: on hold until a maintainer looks at it**',
+  verified: '✅ **FairPR: ready for review**',
+  'needs-info': '📝 **FairPR: a few things to fix before review**',
+  quarantine: '⏸️ **FairPR: on hold until a maintainer looks at it**',
 };
 
 const INTROS: Record<Report['verdict'], string> = {
@@ -28,7 +28,7 @@ export function renderComment(report: Report, policy: Policy, author: string): s
   const hints = report.findings.filter((f) => f.kind === 'hint');
 
   if (report.proof?.present && report.proof.valid) {
-    lines.push('🔏 The contributor ran the ProofPR self-check, and it matches the current code.', '');
+    lines.push('🔏 The contributor ran the FairPR self-check, and it matches the current code.', '');
   }
 
   if (blocking.length) {
@@ -46,18 +46,18 @@ export function renderComment(report: Report, policy: Policy, author: string): s
     '',
     `Repository policy: AI contributions are **${policy.ai_policy.replace(/_/g, ' ')}**.`,
     '',
-    '- Updated your PR? Comment `/proofpr recheck`.',
-    '- Maintainers can override with `/proofpr approve`.',
-    '- Contributors can run the same checks before opening a PR: `npx proofpr check`.',
+    '- Updated your PR? Comment `/fairpr recheck`.',
+    '- Maintainers can override with `/fairpr approve`.',
+    '- Contributors can run the same checks before opening a PR: `npx fairpr check`.',
     '',
     '</details>',
     '',
-    '<sub>[ProofPR](https://github.com/proofpr/proofpr): fair PR checks for the AI era</sub>',
+    '<sub>[FairPR](https://github.com/fairpr/fairpr): fair PR checks for the AI era</sub>',
   );
 
   return lines.filter((l, i, a) => !(l === '' && a[i - 1] === '')).join('\n');
 }
 
 export function renderSkipComment(reason: string): string {
-  return `${COMMENT_MARKER}\n<sub>ProofPR skipped this PR: ${reason}</sub>`;
+  return `${COMMENT_MARKER}\n<sub>FairPR skipped this PR: ${reason}</sub>`;
 }

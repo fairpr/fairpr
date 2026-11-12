@@ -34,7 +34,7 @@ function makeState() {
     ],
     contents: {
       'package.json@headsha': JSON.stringify({ name: 'demo', dependencies: { axios: '^1' } }),
-      '.github/proofpr.yml@main': 'ai_policy: allowed_with_disclosure\nmode: label\n',
+      '.github/fairpr.yml@main': 'ai_policy: allowed_with_disclosure\nmode: label\n',
     },
     permission: { maintainer: 'write', randomuser: 'read' },
   };
@@ -78,7 +78,7 @@ function serve(state) {
 }
 
 function runAction(port, eventName, payload) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'proofpr-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fairpr-'));
   const eventPath = path.join(dir, 'event.json');
   const out = path.join(dir, 'out');
   const summary = path.join(dir, 'summary');
@@ -96,7 +96,7 @@ function runAction(port, eventName, payload) {
         GITHUB_OUTPUT: out,
         GITHUB_STEP_SUMMARY: summary,
         'INPUT_GITHUB-TOKEN': 'fake',
-        'INPUT_CONFIG-PATH': '.github/proofpr.yml',
+        'INPUT_CONFIG-PATH': '.github/fairpr.yml',
         'INPUT_FAIL-ON-QUARANTINE': 'false',
         INPUT_MODE: '',
         NO_PROXY: '127.0.0.1,localhost',
@@ -121,7 +121,7 @@ try {
   let r = await runAction(port, 'pull_request_target', { pull_request: state.pr });
   assert.match(r.output, /quarantine/, r.stdout);
   assert.equal(state.comments.length, 1);
-  assert.ok(state.labels.has('proofpr: quarantine'));
+  assert.ok(state.labels.has('fairpr: quarantine'));
   const comment = state.comments[0].body;
   for (const s of ['placeholder', 'magic-cache-lib', 'CACHE_IMPLEMENTATION_SUMMARY.md', 'pasted from an AI chat', 'not** a rejection']) {
     assert.ok(comment.includes(s), `comment should mention ${s}\n${comment}`);
@@ -137,23 +137,23 @@ try {
   r = await runAction(port, 'pull_request_target', { pull_request: state.pr });
   assert.match(r.output, /verified/, r.stdout);
   assert.equal(state.comments.length, 1, 'must update, not add, comments');
-  assert.deepEqual([...state.labels], ['proofpr: verified']);
+  assert.deepEqual([...state.labels], ['fairpr: verified']);
   console.log('✓ fixed PR becomes verified, comment updated in place, label swapped');
 
-  // 3) Regression back to sloppy, then a non-maintainer tries /proofpr approve -> ignored
+  // 3) Regression back to sloppy, then a non-maintainer tries /fairpr approve -> ignored
   state.pr.body = 'I hope this helps!';
   await runAction(port, 'pull_request_target', { pull_request: state.pr });
-  r = await runAction(port, 'issue_comment', { issue: { number: 7, pull_request: {} }, comment: { id: 99, body: '/proofpr approve', user: { login: 'randomuser', type: 'User' } } });
-  assert.ok(!state.labels.has('proofpr: verified'), 'non-maintainer must not approve');
+  r = await runAction(port, 'issue_comment', { issue: { number: 7, pull_request: {} }, comment: { id: 99, body: '/fairpr approve', user: { login: 'randomuser', type: 'User' } } });
+  assert.ok(!state.labels.has('fairpr: verified'), 'non-maintainer must not approve');
   assert.equal(state.reactions.at(-1), 'confused');
   console.log('✓ non-maintainer cannot approve');
 
   // 4) Maintainer approves -> verified, and approval survives the next push
-  await runAction(port, 'issue_comment', { issue: { number: 7, pull_request: {} }, comment: { id: 100, body: '/proofpr approve', user: { login: 'maintainer', type: 'User' } } });
-  assert.ok(state.labels.has('proofpr: verified'));
+  await runAction(port, 'issue_comment', { issue: { number: 7, pull_request: {} }, comment: { id: 100, body: '/fairpr approve', user: { login: 'maintainer', type: 'User' } } });
+  assert.ok(state.labels.has('fairpr: verified'));
   assert.match(state.comments[0].body, /Approved for review by @maintainer/);
   await runAction(port, 'pull_request_target', { pull_request: state.pr });
-  assert.ok(state.labels.has('proofpr: verified'), 'approval should stick');
+  assert.ok(state.labels.has('fairpr: verified'), 'approval should stick');
   console.log('✓ maintainer approval works and sticks across pushes');
 
   // 5) Maintainer-authored PRs are skipped entirely
@@ -166,7 +166,7 @@ try {
 
   // 6) Broken config fails loudly with a helpful message
   state.pr.author_association = 'FIRST_TIME_CONTRIBUTOR';
-  state.contents['.github/proofpr.yml@main'] = 'ai_policy: sometimes';
+  state.contents['.github/fairpr.yml@main'] = 'ai_policy: sometimes';
   r = await runAction(port, 'pull_request_target', { pull_request: state.pr });
   assert.match(r.stdout, /Configuration error: "ai_policy" must be one of/);
   console.log('✓ invalid config gives a clear error');

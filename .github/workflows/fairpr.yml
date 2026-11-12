@@ -1,5 +1,5 @@
-# ProofPR checks its own pull requests (dogfooding).
-name: ProofPR
+# FairPR checks its own pull requests (dogfooding).
+name: FairPR
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
@@ -10,11 +10,11 @@ permissions:
   pull-requests: write
   issues: write
 concurrency:
-  group: proofpr-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: fairpr-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 jobs:
-  proofpr:
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/proofpr'))
+  fairpr:
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/fairpr'))
     runs-on: ubuntu-latest
     steps:
       # Checks out the BASE branch (the default for pull_request_target), never the PR code.

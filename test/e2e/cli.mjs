@@ -1,4 +1,4 @@
-// End-to-end test of `npx proofpr check` on real git repositories.
+// End-to-end test of `npx fairpr check` on real git repositories.
 // Also proves the CLI's proof matches what the Action computes from GitHub's
 // blob SHAs (computed here independently with `git hash-object`).
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 execFileSync('npx', ['tsc', '--outDir', path.join(root, '.e2e-lib')], { cwd: root, stdio: 'inherit' });
 const { verifyProof } = require(path.join(root, '.e2e-lib/proof.js'));
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'proofpr-cli-'));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fairpr-cli-'));
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const write = (dir, file, content) => { fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true }); fs.writeFileSync(path.join(dir, file), content); };
 const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', NO_COLOR: '1' };
@@ -25,7 +25,7 @@ fs.mkdirSync(upstream);
 sh(upstream, 'init', '-q', '-b', 'main');
 write(upstream, 'package.json', JSON.stringify({ name: 'demo', dependencies: { axios: '^1.0.0' } }));
 write(upstream, 'src/client.ts', "import axios from 'axios';\nexport const get = axios.get;\n");
-write(upstream, '.github/proofpr.yml', 'ai_policy: allowed_with_disclosure\ntest_command: node -e "process.exit(0)"\n');
+write(upstream, '.github/fairpr.yml', 'ai_policy: allowed_with_disclosure\ntest_command: node -e "process.exit(0)"\n');
 sh(upstream, 'add', '-A');
 sh(upstream, 'commit', '-qm', 'init');
 
@@ -35,7 +35,7 @@ sh(tmp, 'clone', '-q', upstream, clone);
 sh(clone, 'checkout', '-qb', 'feature');
 
 const cli = (args, cwd = clone) => {
-  const r = spawnSync(process.execPath, [path.join(root, 'bin/proofpr.js'), ...args], { cwd, encoding: 'utf8', env });
+  const r = spawnSync(process.execPath, [path.join(root, 'bin/fairpr.js'), ...args], { cwd, encoding: 'utf8', env });
   return { code: r.status, out: r.stdout + r.stderr };
 };
 const answers = ['--yes', '--problem', 'GET requests are slow because nothing is cached.', '--change', 'Added a small in-memory cache with a 30 second expiry.', '--tested', 'Ran the test suite and called the endpoint twice locally.', '--ai', 'partial'];
@@ -49,7 +49,7 @@ try {
   let r = cli(['check', ...answers]);
   assert.equal(r.code, 1, r.out);
   for (const s of ['imaginary-cache', 'Placeholder', 'CACHE_SUMMARY.md']) assert.ok(r.out.includes(s), `should mention ${s}\n${r.out}`);
-  assert.ok(!fs.existsSync(path.join(clone, '.git/proofpr/PR_BODY.md')), 'no proof for a failing PR');
+  assert.ok(!fs.existsSync(path.join(clone, '.git/fairpr/PR_BODY.md')), 'no proof for a failing PR');
   console.log('✓ sloppy change is blocked with clear fixes and no proof');
 
   // 2) Fix it -> passes, tests run, description + proof written
@@ -61,10 +61,10 @@ try {
   r = cli(['check', ...answers]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /Tests passed/);
-  const body = fs.readFileSync(path.join(clone, '.git/proofpr/PR_BODY.md'), 'utf8');
+  const body = fs.readFileSync(path.join(clone, '.git/fairpr/PR_BODY.md'), 'utf8');
   assert.match(body, /AI-Assisted: partial/);
   assert.match(body, /Ran `node -e "process.exit\(0\)"`: passed/);
-  assert.match(body, /proofpr:proof v1 fingerprint: sha256:[a-f0-9]{64}/);
+  assert.match(body, /fairpr:proof v1 fingerprint: sha256:[a-f0-9]{64}/);
   console.log('✓ clean change passes, runs tests and writes a description with proof');
 
   // 3) The proof matches what the Action computes from GitHub blob SHAs
@@ -89,7 +89,7 @@ try {
 
   // 5) Failing tests stop the PR
   sh(upstream, 'checkout', '-q', 'main');
-  write(upstream, '.github/proofpr.yml', 'test_command: node -e "process.exit(3)"\n');
+  write(upstream, '.github/fairpr.yml', 'test_command: node -e "process.exit(3)"\n');
   sh(upstream, 'commit', '-qam', 'stricter');
   r = cli(['check', ...answers]);
   assert.equal(r.code, 1, r.out);
@@ -97,7 +97,7 @@ try {
   console.log('✓ failing tests block the PR');
 
   // 6) Rules come from the target branch: a contributor editing the policy in their branch has no effect
-  write(clone, '.github/proofpr.yml', 'test_command: ""\n');
+  write(clone, '.github/fairpr.yml', 'test_command: ""\n');
   sh(clone, 'add', '-A');
   sh(clone, 'commit', '-qm', 'loosen rules');
   r = cli(['check', ...answers]);
@@ -105,7 +105,7 @@ try {
   console.log('✓ policy is read from the target branch, not the contributor branch');
 
   // 7) Project that bans AI: declaring AI use is blocked
-  write(upstream, '.github/proofpr.yml', 'ai_policy: not_allowed\n');
+  write(upstream, '.github/fairpr.yml', 'ai_policy: not_allowed\n');
   sh(upstream, 'commit', '-qam', 'no ai');
   r = cli(['check', ...answers]);
   assert.equal(r.code, 1);

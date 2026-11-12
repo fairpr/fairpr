@@ -1,11 +1,11 @@
-# ProofPR
+# FairPR
 
 **Stop AI-slop pull requests without punishing honest contributors.**
 
-Maintainers are drowning in AI-generated PRs that look polished but don't work. Most tools answer by auto-closing PRs, which also drives away real newcomers. ProofPR works on **both sides**:
+Maintainers are drowning in AI-generated PRs that look polished but don't work. Most tools answer by auto-closing PRs, which also drives away real newcomers. FairPR works on **both sides**:
 
 - **For maintainers:** a GitHub Action that checks every PR against your policy and explains what to fix.
-- **For contributors (and their AI agents):** `npx proofpr check` runs the same checks *before* you open the PR and adds a proof that maintainers can verify.
+- **For contributors (and their AI agents):** `npx fairpr check` runs the same checks *before* you open the PR and adds a proof that maintainers can verify.
 
 ### For maintainers
 
@@ -15,14 +15,14 @@ Maintainers are drowning in AI-generated PRs that look polished but don't work. 
 - ⏸️ **Never auto-closes.** Suspicious PRs are put *on hold* with a label, and a maintainer decides
 - 🔒 **Safe by design.** It never runs PR code, reads your policy from the default branch only, and stores no data
 
-<!-- TODO before launch: replace with a 20-second GIF of a real PR getting a ProofPR comment -->
+<!-- TODO before launch: replace with a 20-second GIF of a real PR getting a FairPR comment -->
 
 ## Quick start (2 minutes)
 
-**1.** Add `.github/workflows/proofpr.yml`:
+**1.** Add `.github/workflows/fairpr.yml`:
 
 ```yaml
-name: ProofPR
+name: FairPR
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review]
@@ -33,20 +33,20 @@ permissions:
   pull-requests: write
   issues: write
 jobs:
-  proofpr:
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/proofpr'))
+  fairpr:
+    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/fairpr'))
     runs-on: ubuntu-latest
     steps:
-      - uses: proofpr/proofpr@v0
+      - uses: fairpr/fairpr@v0
 ```
 
-**2.** (Optional) Add `.github/proofpr.yml` with your rules. Without it, sensible defaults are used.
+**2.** (Optional) Add `.github/fairpr.yml` with your rules. Without it, sensible defaults are used.
 
 **3.** Not sure yet? Set `mode: dry-run` to see results in the Actions log without commenting on anyone's PR.
 
 ### Trying it on your own repo
 
-ProofPR skips maintainers and returning contributors by default, so it will skip **your own** test PRs. To test it, add this to `.github/proofpr.yml` on your default branch, then open a PR:
+FairPR skips maintainers and returning contributors by default, so it will skip **your own** test PRs. To test it, add this to `.github/fairpr.yml` on your default branch, then open a PR:
 
 ```yaml
 skip_maintainers: false
@@ -55,24 +55,24 @@ skip_returning_contributors: false
 
 Remove these two lines when you're done testing.
 
-## For contributors: `npx proofpr check`
+## For contributors: `npx fairpr check`
 
 Run this in your clone, on your branch, before opening a PR:
 
 ```bash
-npx proofpr check
+npx fairpr check
 ```
 
 It reads the project's rules from the target branch, runs the same checks the maintainers run, asks you three short questions (what problem, what changed, how you tested), runs the project's tests if it defines a `test_command`, and writes a PR description with a **proof**:
 
 ```
-<!-- proofpr:proof v1 fingerprint: sha256:4c0a... -->
-🔏 Self-checked with ProofPR: 9 checks passed for this exact code.
+<!-- fairpr:proof v1 fingerprint: sha256:4c0a... -->
+🔏 Self-checked with FairPR: 9 checks passed for this exact code.
 ```
 
 The proof is a fingerprint of the exact files in your PR. The maintainer-side Action recomputes it, so it can't be copied to a different change. If you edit the code afterwards, just run the check again.
 
-Open the PR straight away with `npx proofpr check --create` (requires the [GitHub CLI](https://cli.github.com)).
+Open the PR straight away with `npx fairpr check --create` (requires the [GitHub CLI](https://cli.github.com)).
 
 <details><summary>All options</summary>
 
@@ -94,9 +94,9 @@ Open the PR straight away with `npx proofpr check --create` (requires the [GitHu
 
 ## For AI coding agents
 
-Agents now open many PRs. Give yours the ProofPR skill so its PRs follow each project's rules and disclose AI use honestly:
+Agents now open many PRs. Give yours the FairPR skill so its PRs follow each project's rules and disclose AI use honestly:
 
-- **Claude Code:** copy [`skills/proofpr/SKILL.md`](skills/proofpr/SKILL.md) to `~/.claude/skills/proofpr/SKILL.md`
+- **Claude Code:** copy [`skills/fairpr/SKILL.md`](skills/fairpr/SKILL.md) to `~/.claude/skills/fairpr/SKILL.md`
 - **Codex, Cursor and others:** add the snippet from [`docs/agents.md`](docs/agents.md) to your `AGENTS.md`
 
 ## What contributors see
@@ -105,19 +105,19 @@ Each PR gets one of three labels and a single comment:
 
 | Label | Meaning |
 |---|---|
-| `proofpr: verified` | Follows your policy, with no slop signals. Ready for review. |
-| `proofpr: needs info` | Something to fix (e.g. missing disclosure, no description). The contributor gets clear steps. |
-| `proofpr: quarantine` | Several slop signals. On hold until a maintainer looks; **not** closed. |
+| `fairpr: verified` | Follows your policy, with no slop signals. Ready for review. |
+| `fairpr: needs info` | Something to fix (e.g. missing disclosure, no description). The contributor gets clear steps. |
+| `fairpr: quarantine` | Several slop signals. On hold until a maintainer looks; **not** closed. |
 
 When the contributor pushes a fix or edits the description, the check re-runs and the same comment updates.
 
 **Commands**
-- `/proofpr recheck`: run the checks again
-- `/proofpr approve`: maintainers (write access) override the result; the approval sticks across later pushes
+- `/fairpr recheck`: run the checks again
+- `/fairpr approve`: maintainers (write access) override the result; the approval sticks across later pushes
 
 ## Configuration
 
-`.github/proofpr.yml` (every setting optional):
+`.github/fairpr.yml` (every setting optional):
 
 ```yaml
 ai_policy: allowed_with_disclosure   # allowed | allowed_with_disclosure | not_allowed
@@ -133,9 +133,9 @@ skip_returning_contributors: true    # only first-time contributors are checked
 ignore_paths: ["docs/"]
 test_command: "npm test"              # run by the contributor CLI before it creates a proof
 labels:
-  verified: "proofpr: verified"
-  needs_info: "proofpr: needs info"
-  quarantine: "proofpr: quarantine"
+  verified: "fairpr: verified"
+  needs_info: "fairpr: needs info"
+  quarantine: "fairpr: quarantine"
 ```
 
 With `ai_policy: allowed_with_disclosure`, contributors add one line to the PR description:
@@ -167,7 +167,7 @@ Tip: add that line to your `.github/pull_request_template.md`.
 
 **Self-check proof:** a valid proof is shown in the comment (🔏). A proof that no longer matches the code is reported as a note asking the contributor to re-run the check.
 
-**Avoiding false accusations:** in monorepos or projects where ProofPR can't see every dependency file, unknown imports are reported as hints instead of signals.
+**Avoiding false accusations:** in monorepos or projects where FairPR can't see every dependency file, unknown imports are reported as hints instead of signals.
 
 ## Security
 

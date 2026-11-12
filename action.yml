@@ -1,6 +1,6 @@
-name: 'ProofPR'
+name: 'FairPR'
 description: 'Stop AI-slop pull requests without punishing honest contributors. Checks PRs against your policy and explains what to fix.'
-author: 'ProofPR'
+author: 'FairPR'
 branding:
   icon: 'check-circle'
   color: 'green'
@@ -12,7 +12,7 @@ inputs:
   config-path:
     description: 'Path to the policy file, read from the base branch.'
     required: false
-    default: '.github/proofpr.yml'
+    default: '.github/fairpr.yml'
   mode:
     description: 'Override the policy mode: label, comment or dry-run.'
     required: false

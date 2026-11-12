@@ -1,8 +1,7 @@
 {
-  "name": "proofpr",
-  "version": "0.2.0",
-  "description": "Stop AI-slop pull requests without punishing honest contributors. A GitHub Action that checks PRs against your repo policy and explains what to fix.",
-  "main": "lib/action.js",
+  "name": "fairpr",
+  "version": "0.3.0",
+  "description": "Fair PR checks for the AI era: stop AI-slop pull requests without punishing honest contributors.",
   "scripts": {
     "build": "npm run build:action && npm run build:cli",
     "build:action": "tsc --noEmit && ncc build src/main.ts -o dist --license licenses.txt",
@@ -37,7 +36,7 @@
     "node": ">=20"
   },
   "bin": {
-    "proofpr": "bin/proofpr.js"
+    "fairpr": "bin/fairpr.js"
   },
   "files": [
     "bin/",
@@ -46,10 +45,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/proofpr/proofpr.git"
+    "url": "git+https://github.com/fairpr/fairpr.git"
   },
-  "homepage": "https://github.com/proofpr/proofpr#readme",
+  "homepage": "https://github.com/fairpr/fairpr#readme",
   "bugs": {
-    "url": "https://github.com/proofpr/proofpr/issues"
+    "url": "https://github.com/fairpr/fairpr/issues"
   }
 }

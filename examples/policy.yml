@@ -1,6 +1,6 @@
-# .github/proofpr.yml
+# .github/fairpr.yml
 # Your repository's contribution policy. Every setting is optional.
-# ProofPR always reads this file from your default branch, so PRs cannot change it.
+# FairPR always reads this file from your default branch, so PRs cannot change it.
 
 # allowed | allowed_with_disclosure | not_allowed
 ai_policy: allowed_with_disclosure

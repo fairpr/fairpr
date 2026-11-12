@@ -629,14 +629,14 @@ const manifests_1 = __nccwpck_require__(8977);
 const proof_1 = __nccwpck_require__(2765);
 const checks_1 = __nccwpck_require__(2369);
 const git_1 = __nccwpck_require__(6094);
-const VERSION = '0.2.0';
-const HELP = `ProofPR ${VERSION}: check your pull request against a project's contribution policy before you open it.
+const VERSION = '0.3.0';
+const HELP = `FairPR ${VERSION}: check your pull request against a project's contribution policy before you open it.
 
 Usage:
-  npx proofpr check [options]
+  npx fairpr check [options]
 
 Run it inside your clone, on the branch you want to submit. It:
-  1. reads the project's rules (.github/proofpr.yml on the target branch)
+  1. reads the project's rules (.github/fairpr.yml on the target branch)
   2. runs the same checks maintainers run on incoming PRs
   3. asks you three short questions so the description is in your own words
   4. runs the project's tests (if the project defines test_command)
@@ -688,7 +688,7 @@ function parseArgs(argv) {
         else if (!flag.startsWith('-') && !a.cmd)
             a.cmd = flag;
         else
-            throw new UsageError(`Unknown option "${t}". Run "npx proofpr --help".`);
+            throw new UsageError(`Unknown option "${t}". Run "npx fairpr --help".`);
     }
     if (a.ai && !['yes', 'partial', 'no'].includes(a.ai.toLowerCase()))
         throw new UsageError('--ai must be yes, partial or no.');
@@ -720,7 +720,7 @@ function buildBody(o) {
         parts.push('', `Fixes #${o.issue.replace('#', '')}`);
     parts.push('', `AI-Assisted: ${o.ai}`);
     if (o.proof) {
-        parts.push('', '---', (0, proof_1.proofMarker)(o.proof), `🔏 Self-checked with [ProofPR](https://github.com/proofpr/proofpr) v${VERSION}: ${o.checksPassed ?? 0} checks passed for this exact code.`);
+        parts.push('', '---', (0, proof_1.proofMarker)(o.proof), `🔏 Self-checked with [FairPR](https://github.com/fairpr/fairpr) v${VERSION}: ${o.checksPassed ?? 0} checks passed for this exact code.`);
     }
     return parts.join('\n') + '\n';
 }
@@ -749,7 +749,7 @@ async function check(args) {
     const base = (0, git_1.baseBranch)(cwd, remote, args.base);
     const baseRef = `${remote}/${base}`;
     const branch = (0, git_1.currentBranch)(cwd);
-    out(`${bold('ProofPR')} ${dim(`v${VERSION}`)}: checking ${cyan(branch)} against ${cyan(baseRef)}`);
+    out(`${bold('FairPR')} ${dim(`v${VERSION}`)}: checking ${cyan(branch)} against ${cyan(baseRef)}`);
     if (!(0, git_1.fetchBase)(cwd, remote, base))
         out(dim(`  (could not fetch ${baseRef}; using your local copy)`));
     if (branch === base)
@@ -757,10 +757,10 @@ async function check(args) {
     if ((0, git_1.hasUncommittedChanges)(cwd))
         out(yellow('  You have uncommitted changes. Only committed code is checked and included in the PR.'));
     // Rules come from the TARGET branch, exactly like the maintainer-side Action.
-    const { policy, warnings } = (0, policy_1.parsePolicy)((0, git_1.readAt)(cwd, baseRef, '.github/proofpr.yml'));
+    const { policy, warnings } = (0, policy_1.parsePolicy)((0, git_1.readAt)(cwd, baseRef, '.github/fairpr.yml'));
     warnings.forEach((w) => out(yellow(`  ${w}`)));
-    if (!(0, git_1.readAt)(cwd, baseRef, '.github/proofpr.yml'))
-        out(dim('  This project has no .github/proofpr.yml; using the default rules.'));
+    if (!(0, git_1.readAt)(cwd, baseRef, '.github/fairpr.yml'))
+        out(dim('  This project has no .github/fairpr.yml; using the default rules.'));
     const mb = (0, git_1.mergeBase)(cwd, baseRef);
     const files = (0, git_1.changedFiles)(cwd, mb);
     if (files.length === 0)
@@ -806,7 +806,7 @@ async function check(args) {
                 printFindings(hints);
             }
             out();
-            out(dim('Fix these, commit, and run `npx proofpr check` again.'));
+            out(dim('Fix these, commit, and run `npx fairpr check` again.'));
             return { ok: false, stage: 'checks', report };
         }
         out(green(`✓ All ${report.passed.length} checks passed.`));
@@ -833,7 +833,7 @@ async function check(args) {
         // ---- proof + description
         const fp = (0, proof_1.fingerprint)(files);
         const body = buildBody({ problem, change, tested, ai, issue, testCommand, proof: fp, checksPassed: report.passed.length });
-        const dir = path.join(cwd, '.git', 'proofpr');
+        const dir = path.join(cwd, '.git', 'fairpr');
         fs.mkdirSync(dir, { recursive: true });
         const bodyPath = path.join(dir, 'PR_BODY.md');
         fs.writeFileSync(bodyPath, body);
@@ -856,11 +856,11 @@ async function check(args) {
             out(green(bold(`✓ Pull request opened: ${prUrl}`)));
         }
         else {
-            out(bold('Your PR description (saved to .git/proofpr/PR_BODY.md):'));
+            out(bold('Your PR description (saved to .git/fairpr/PR_BODY.md):'));
             out(dim('─'.repeat(60)));
             out(body.trimEnd());
             out(dim('─'.repeat(60)));
-            out(`Paste it as the PR description, or open the PR with: ${cyan(`gh pr create --title ${JSON.stringify(title)} --body-file .git/proofpr/PR_BODY.md`)}`);
+            out(`Paste it as the PR description, or open the PR with: ${cyan(`gh pr create --title ${JSON.stringify(title)} --body-file .git/fairpr/PR_BODY.md`)}`);
             out(dim('If you change the code after this, run the check again. The proof only matches this exact code.'));
         }
         return { ok: true, stage: 'done', report, bodyPath, fingerprint: fp, prUrl };
@@ -887,7 +887,7 @@ async function main(argv = process.argv.slice(2)) {
         return args.cmd || args.help ? 0 : 2;
     }
     if (args.cmd !== 'check') {
-        console.error(red(`Unknown command "${args.cmd}". Did you mean "npx proofpr check"?`));
+        console.error(red(`Unknown command "${args.cmd}". Did you mean "npx fairpr check"?`));
         return 2;
     }
     try {
@@ -979,7 +979,7 @@ function evaluate(ctx, policy) {
             id: 'proof', kind: 'hint',
             title: 'Self-check proof is out of date',
             detail: proof.reason ?? 'The proof could not be verified.',
-            fix: 'Run the ProofPR self-check again and paste the new result into the description.',
+            fix: 'Run the FairPR self-check again and paste the new result into the description.',
         });
     }
     return { verdict: decide(findings), findings, passed, skipped, proof };
@@ -1417,9 +1417,9 @@ exports.DEFAULT_POLICY = {
     ignore_paths: [],
     test_command: '',
     labels: {
-        verified: 'proofpr: verified',
-        needs_info: 'proofpr: needs info',
-        quarantine: 'proofpr: quarantine',
+        verified: 'fairpr: verified',
+        needs_info: 'fairpr: needs info',
+        quarantine: 'fairpr: quarantine',
     },
 };
 class PolicyError extends Error {
@@ -1428,7 +1428,7 @@ exports.PolicyError = PolicyError;
 const AI_POLICIES = ['allowed', 'allowed_with_disclosure', 'not_allowed'];
 const MODES = ['label', 'comment', 'dry-run'];
 /**
- * Parse .github/proofpr.yml. Unknown keys are reported (typos are a common
+ * Parse .github/fairpr.yml. Unknown keys are reported (typos are a common
  * source of "why is my rule ignored?"), invalid values throw a clear error.
  */
 function parsePolicy(yamlText) {
@@ -1441,17 +1441,17 @@ function parsePolicy(yamlText) {
         raw = (0, yaml_1.parse)(yamlText);
     }
     catch (e) {
-        throw new PolicyError(`.github/proofpr.yml is not valid YAML: ${e.message}`);
+        throw new PolicyError(`.github/fairpr.yml is not valid YAML: ${e.message}`);
     }
     if (raw === null || raw === undefined)
         return { policy, warnings };
     if (typeof raw !== 'object' || Array.isArray(raw)) {
-        throw new PolicyError('.github/proofpr.yml must be a mapping of settings (key: value).');
+        throw new PolicyError('.github/fairpr.yml must be a mapping of settings (key: value).');
     }
     const r = raw;
     for (const key of Object.keys(r)) {
         if (!(key in exports.DEFAULT_POLICY))
-            warnings.push(`Unknown setting "${key}" in .github/proofpr.yml was ignored.`);
+            warnings.push(`Unknown setting "${key}" in .github/fairpr.yml was ignored.`);
     }
     const bool = (k) => {
         if (r[k] === undefined)
@@ -1537,12 +1537,12 @@ function fingerprint(files) {
         .sort();
     return 'sha256:' + (0, crypto_1.createHash)('sha256').update(lines.join('\n')).digest('hex');
 }
-const PROOF_RE = /<!--\s*proofpr:proof\s+v1\s+fingerprint:\s*(sha256:[a-f0-9]{64})\s*-->/i;
+const PROOF_RE = /<!--\s*fairpr:proof\s+v1\s+fingerprint:\s*(sha256:[a-f0-9]{64})\s*-->/i;
 function extractProof(body) {
     return body.match(PROOF_RE)?.[1];
 }
 function proofMarker(fp) {
-    return `<!-- proofpr:proof v1 fingerprint: ${fp} -->`;
+    return `<!-- fairpr:proof v1 fingerprint: ${fp} -->`;
 }
 function verifyProof(body, files) {
     const claimed = extractProof(body);

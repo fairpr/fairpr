@@ -52,9 +52,9 @@ export const DEFAULT_POLICY: Policy = {
   ignore_paths: [],
   test_command: '',
   labels: {
-    verified: 'proofpr: verified',
-    needs_info: 'proofpr: needs info',
-    quarantine: 'proofpr: quarantine',
+    verified: 'fairpr: verified',
+    needs_info: 'fairpr: needs info',
+    quarantine: 'fairpr: quarantine',
   },
 };
 
@@ -64,7 +64,7 @@ const AI_POLICIES: AiPolicy[] = ['allowed', 'allowed_with_disclosure', 'not_allo
 const MODES: Mode[] = ['label', 'comment', 'dry-run'];
 
 /**
- * Parse .github/proofpr.yml. Unknown keys are reported (typos are a common
+ * Parse .github/fairpr.yml. Unknown keys are reported (typos are a common
  * source of "why is my rule ignored?"), invalid values throw a clear error.
  */
 export function parsePolicy(yamlText: string | undefined): { policy: Policy; warnings: string[] } {
@@ -76,16 +76,16 @@ export function parsePolicy(yamlText: string | undefined): { policy: Policy; war
   try {
     raw = parse(yamlText);
   } catch (e) {
-    throw new PolicyError(`.github/proofpr.yml is not valid YAML: ${(e as Error).message}`);
+    throw new PolicyError(`.github/fairpr.yml is not valid YAML: ${(e as Error).message}`);
   }
   if (raw === null || raw === undefined) return { policy, warnings };
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new PolicyError('.github/proofpr.yml must be a mapping of settings (key: value).');
+    throw new PolicyError('.github/fairpr.yml must be a mapping of settings (key: value).');
   }
 
   const r = raw as Record<string, unknown>;
   for (const key of Object.keys(r)) {
-    if (!(key in DEFAULT_POLICY)) warnings.push(`Unknown setting "${key}" in .github/proofpr.yml was ignored.`);
+    if (!(key in DEFAULT_POLICY)) warnings.push(`Unknown setting "${key}" in .github/fairpr.yml was ignored.`);
   }
 
   const bool = (k: keyof Policy) => {
