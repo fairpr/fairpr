@@ -27615,6 +27615,11 @@ function installRateLimiter(octokit, log) {
     });
     octokit.hook.after('request', (res) => {
         const h = res.headers;
+        // GitHub has separate budgets: "core" (5000/h) and "search" (30/min). Only the core budget
+        // is tracked here; searches are spaced out separately in isFirstMerged().
+        const resource = h['x-ratelimit-resource'] ?? 'core';
+        if (resource !== 'core')
+            return;
         if (h['x-ratelimit-remaining'])
             remaining = Number(h['x-ratelimit-remaining']);
         if (h['x-ratelimit-reset'])

@@ -64,7 +64,8 @@ const server = http.createServer((req, res) => {
   if ((m = p.match(/^\/repos\/o\/r\/pulls\/(\d+)\/files$/))) return send(200, files(+m[1]));
   if (p === '/search/issues') {
     searches.push(url.searchParams.get('q'));
-    return send(200, { total_count: url.searchParams.get('q').includes('author:firstmerge') ? 0 : 3, items: [] });
+    // Search has its own small budget; it must not make the tool think the main budget is used up.
+    return send(200, { total_count: url.searchParams.get('q').includes('author:firstmerge') ? 0 : 3, items: [] }, { 'x-ratelimit-resource': 'search', 'x-ratelimit-remaining': '28', 'x-ratelimit-reset': String(Math.floor(now / 1000) + 60) });
   }
   if ((m = p.match(/^\/users\/(.+)$/))) return send(200, { created_at: iso(1000) });
   if (p.startsWith('/repos/o/r/git/trees/')) return send(200, { tree: [{ path: 'package.json', type: 'blob' }] });
@@ -91,6 +92,7 @@ try {
   let r = await run(['--repos', 'o/r,missing/repo', '--per-repo', '50', '--since', iso(30).slice(0, 10), '--out', out]);
   assert.equal(r.code, 0, r.log);
   assert.match(r.log, /slow down; waiting/, 'should wait and retry on 429');
+  assert.doesNotMatch(r.log, /rate limit nearly used/, 'search budget must not trigger the main-budget wait');
   assert.match(r.log, /missing\/repo: .*skipping repo|could not list PRs/, r.log);
   const rows = fs.readFileSync(path.join(out, 'results.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(rows.length, 9, 'maintainer, bot, old PRs and returning contributors are excluded');
