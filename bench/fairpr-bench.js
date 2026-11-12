@@ -27636,6 +27636,23 @@ function installRateLimiter(octokit, log) {
         throw error;
     });
 }
+let lastSearch = 0;
+/** True if `login` had no merged PR in `repo` before `mergedAt`. Uses the search API (30 requests/min). */
+async function isFirstMerged(octokit, repo, login, mergedAt, log) {
+    const wait = lastSearch + 2200 - Date.now();
+    if (wait > 0)
+        await sleep(wait);
+    lastSearch = Date.now();
+    try {
+        const before = new Date(Date.parse(mergedAt) - 1000).toISOString().slice(0, 19);
+        const res = await octokit.rest.search.issuesAndPullRequests({ q: `repo:${repo} is:pr is:merged author:${login} merged:<${before}`, per_page: 1 });
+        return res.data.total_count === 0;
+    }
+    catch (e) {
+        log(`  search failed for @${login} (${e.message}); not counting this PR`);
+        return false;
+    }
+}
 function loadDone(file) {
     const done = new Map();
     if (!fs.existsSync(file))
@@ -27659,21 +27676,33 @@ async function runBenchmark(octokit, opts, log = console.log) {
     const done = loadDone(file);
     if (opts.reportOnly)
         return [...done.values()];
+    try {
+        await octokit.rest.rateLimit.get();
+    }
+    catch (e) {
+        if (e.status === 401) {
+            throw new Error('GitHub rejected the token ("Bad credentials"). Check GITHUB_TOKEN: no quotes, no spaces, the full github_pat_... value.');
+        }
+    }
     installRateLimiter(octokit, log);
     const ageCache = new Map();
     const since = Date.parse(opts.since);
     for (const full of opts.repos) {
         const [owner, repo] = full.split('/');
         const r = { owner, repo };
-        let have = [...done.values()].filter((x) => x.repo === full).length;
-        if (have >= opts.perRepo) {
-            log(`${full}: already have ${have}, skipping`);
+        const mine = [...done.values()].filter((x) => x.repo === full);
+        // Up to perRepo merged AND up to perRepo not-merged PRs, so both sides are measured fairly.
+        let haveMerged = mine.filter((x) => x.group === 'merged').length;
+        let haveOther = mine.length - haveMerged;
+        const full_ = () => haveMerged >= opts.perRepo && haveOther >= opts.perRepo;
+        if (full_()) {
+            log(`${full}: already have ${mine.length}, skipping`);
             continue;
         }
         log(`${full}: collecting first-time contributor PRs closed since ${opts.since}…`);
         let page = 1;
         let reachedOld = false;
-        while (have < opts.perRepo && !reachedOld && page <= 30) {
+        while (!full_() && !reachedOld && page <= 40) {
             let pulls;
             try {
                 ({ data: pulls } = await octokit.rest.pulls.list({ ...r, state: 'closed', sort: 'created', direction: 'desc', per_page: 100, page }));
@@ -27686,7 +27715,7 @@ async function runBenchmark(octokit, opts, log = console.log) {
                 break;
             page++;
             for (const pr of pulls) {
-                if (have >= opts.perRepo)
+                if (full_())
                     break;
                 if (Date.parse(pr.created_at) < since) {
                     reachedOld = true;
@@ -27698,12 +27727,20 @@ async function runBenchmark(octokit, opts, log = console.log) {
                 const login = pr.user?.login ?? 'ghost';
                 if (pr.user?.type === 'Bot' || login.endsWith('[bot]'))
                     continue;
-                if (!FIRST_TIME.has(pr.author_association))
-                    continue;
                 if (pr.draft)
                     continue;
                 const labels = (pr.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name ?? '')).filter(Boolean);
                 const group = labels.some((l) => LOW_QUALITY_LABEL.test(l)) ? 'labeled-low-quality' : pr.merged_at ? 'merged' : 'closed-unmerged';
+                if (group === 'merged' ? haveMerged >= opts.perRepo : haveOther >= opts.perRepo)
+                    continue;
+                let firstTime = FIRST_TIME.has(pr.author_association);
+                // GitHub reports the author's CURRENT association: after their first PR is merged they
+                // become a "CONTRIBUTOR". Count a merged PR as first-time if nothing of theirs was merged before it.
+                if (!firstTime && pr.author_association === 'CONTRIBUTOR' && pr.merged_at) {
+                    firstTime = await isFirstMerged(octokit, full, login, pr.merged_at, log);
+                }
+                if (!firstTime)
+                    continue;
                 try {
                     const rawFiles = await octokit.paginate(octokit.rest.pulls.listFiles, { ...r, pull_number: pr.number, per_page: 100 }, (res, stop) => {
                         if (res.data.length < 100)
@@ -27760,21 +27797,24 @@ async function runBenchmark(octokit, opts, log = console.log) {
                         labels,
                         createdAt: pr.created_at,
                         verdict: report.verdict,
-                        findings: report.findings.map((f) => ({ id: f.id, kind: f.kind, title: f.title })),
+                        findings: report.findings.map((f) => ({ id: f.id, kind: f.kind, title: f.title, detail: f.detail.slice(0, 400) })),
                         changedFiles: files.length,
                     };
                     fs.appendFileSync(file, JSON.stringify(rec) + '\n');
                     done.set(key, rec);
-                    have++;
-                    if (have % 10 === 0)
-                        log(`  ${have}/${opts.perRepo}`);
+                    if (group === 'merged')
+                        haveMerged++;
+                    else
+                        haveOther++;
+                    if ((haveMerged + haveOther) % 10 === 0)
+                        log(`  merged ${haveMerged}/${opts.perRepo}, rejected ${haveOther}/${opts.perRepo}`);
                 }
                 catch (e) {
                     log(`  skipped #${pr.number}: ${e.message}`);
                 }
             }
         }
-        log(`${full}: ${have} PRs measured`);
+        log(`${full}: ${haveMerged} merged + ${haveOther} rejected PRs measured`);
     }
     return [...done.values()];
 }
@@ -27808,7 +27848,14 @@ async function benchMain(argv = process.argv.slice(2)) {
     }
     const octokit = (0, github_1.getOctokit)(token ?? 'none', process.env.GITHUB_API_URL ? { baseUrl: process.env.GITHUB_API_URL } : {});
     const started = Date.now();
-    const records = await runBenchmark(octokit, opts);
+    let records;
+    try {
+        records = await runBenchmark(octokit, opts);
+    }
+    catch (e) {
+        console.error(e.message);
+        return 2;
+    }
     const reportPath = (0, report_1.writeReport)(records, opts.out, { repos: opts.repos, since: opts.since, policy: exports.BENCH_POLICY });
     console.log(`\nMeasured ${records.length} PRs in ${Math.round((Date.now() - started) / 60000)} min.`);
     console.log(`Report: ${reportPath}`);
@@ -27955,10 +28002,11 @@ function buildReport(records, meta) {
         lines.push('');
     };
     list('Merged PRs that were put on hold: review these (possible false alarms)', merged.filter((r) => r.verdict === 'quarantine'));
+    list('Merged PRs with at least one slop signal (check these for false alarms)', merged.filter((r) => hasSignal(r) && r.verdict !== 'quarantine'));
     list('Labeled low-quality PRs that FairPR verified (missed)', labeled.filter((r) => r.verdict === 'verified'));
     list('Examples: closed PRs put on hold', closed.filter((r) => r.verdict === 'quarantine'), 15);
     // ---- method
-    lines.push('## Method and limits', '', `- Repositories: ${meta.repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo, so a few early contributors who later got PRs merged are missing from the sample.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
+    lines.push('## Method and limits', '', `- Repositories: ${meta.repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the search API confirmed it was their first merged PR there.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
     return lines.join('\n');
 }
 function writeReport(records, outDir, meta) {
@@ -28201,7 +28249,8 @@ const hallucinatedImports = {
                 for (const line of (0, files_1.addedLines)(f)) {
                     for (const spec of (0, imports_1.jsSpecifiers)(line)) {
                         const name = (0, imports_1.jsPackageName)(spec, ctx.manifests.jsAliases);
-                        if (name && !npm.has(name) && !npm.has(`@types/${name}`)) {
+                        const isLocalFolder = !!name && !name.startsWith('@') && !!ctx.manifests.localDirs?.has(name);
+                        if (name && !isLocalFolder && !npm.has(name) && !npm.has(`@types/${name}`)) {
                             unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete });
                         }
                     }
@@ -28849,6 +28898,16 @@ function pyprojectDeps(text) {
     }
     return out;
 }
+function normalizePath(p) {
+    const out = [];
+    for (const part of p.split('/')) {
+        if (part === '..')
+            out.pop();
+        else if (part && part !== '.')
+            out.push(part);
+    }
+    return out.join('/');
+}
 async function loadManifests(reader, files) {
     const manifests = {};
     const changed = files.filter((f) => f.status !== 'removed').map((f) => f.filename);
@@ -28858,6 +28917,17 @@ async function loadManifests(reader, files) {
         return manifests;
     const rootTree = await reader.list('');
     const rootNames = new Set(rootTree.map((t) => t.path));
+    const localDirs = new Set();
+    for (const t of rootTree)
+        if (t.type === 'tree')
+            localDirs.add(t.path);
+    if (rootNames.has('src'))
+        for (const t of await reader.list('src'))
+            if (t.type === 'tree')
+                localDirs.add(t.path);
+    for (const p of changed)
+        p.split('/').slice(0, -1).forEach((seg) => localDirs.add(seg));
+    manifests.localDirs = localDirs;
     // ---- npm: nearest package.json for each changed file, plus the root one
     if (jsFiles.length) {
         const candidates = new Set(['package.json']);
@@ -28904,14 +28974,31 @@ async function loadManifests(reader, files) {
     if (pyFiles.length) {
         const deps = new Set();
         let sawManifest = false;
-        for (const t of rootTree) {
-            if (t.type === 'blob' && /^requirements.*\.(txt|in)$/i.test(t.path)) {
-                const text = await reader.read(t.path);
-                if (text) {
-                    sawManifest = true;
-                    text.split('\n').map(reqName).forEach((n) => n && deps.add(n));
+        // requirements*.txt, following "-r other.txt" / "-c constraints.txt" includes
+        const seen = new Set();
+        const readReq = async (file, depth) => {
+            if (seen.has(file) || depth > 4)
+                return;
+            seen.add(file);
+            const text = await reader.read(file);
+            if (!text)
+                return;
+            sawManifest = true;
+            const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : '';
+            for (const line of text.split('\n')) {
+                const inc = line.trim().match(/^(?:-r|-c|--requirement|--constraint)\s*=?\s*(\S+)/);
+                if (inc)
+                    await readReq(normalizePath(dir + inc[1]), depth + 1);
+                else {
+                    const n = reqName(line);
+                    if (n)
+                        deps.add(n);
                 }
             }
+        };
+        for (const t of rootTree) {
+            if (t.type === 'blob' && /^requirements.*\.(txt|in)$/i.test(t.path))
+                await readReq(t.path, 0);
         }
         if (rootNames.has('pyproject.toml')) {
             const pyproject = await reader.read('pyproject.toml');
@@ -28941,6 +29028,7 @@ async function loadManifests(reader, files) {
                 }
             };
             addTree(rootTree);
+            localDirs.forEach((d) => local.add(d));
             if (rootNames.has('src'))
                 addTree(await reader.list('src'));
             for (const dir of new Set(pyFiles.map((p) => p.split('/').slice(0, -1).join('/')).filter(Boolean))) {

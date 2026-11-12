@@ -60,6 +60,15 @@ export function pyprojectDeps(text: string): string[] {
   return out;
 }
 
+function normalizePath(p: string): string {
+  const out: string[] = [];
+  for (const part of p.split('/')) {
+    if (part === '..') out.pop();
+    else if (part && part !== '.') out.push(part);
+  }
+  return out.join('/');
+}
+
 export async function loadManifests(reader: RepoReader, files: ChangedFile[]): Promise<Manifests> {
   const manifests: Manifests = {};
   const changed = files.filter((f) => f.status !== 'removed').map((f) => f.filename);
@@ -69,6 +78,12 @@ export async function loadManifests(reader: RepoReader, files: ChangedFile[]): P
 
   const rootTree = await reader.list('');
   const rootNames = new Set(rootTree.map((t) => t.path));
+
+  const localDirs = new Set<string>();
+  for (const t of rootTree) if (t.type === 'tree') localDirs.add(t.path);
+  if (rootNames.has('src')) for (const t of await reader.list('src')) if (t.type === 'tree') localDirs.add(t.path);
+  for (const p of changed) p.split('/').slice(0, -1).forEach((seg) => localDirs.add(seg));
+  manifests.localDirs = localDirs;
 
   // ---- npm: nearest package.json for each changed file, plus the root one
   if (jsFiles.length) {
@@ -110,14 +125,26 @@ export async function loadManifests(reader: RepoReader, files: ChangedFile[]): P
   if (pyFiles.length) {
     const deps = new Set<string>();
     let sawManifest = false;
-    for (const t of rootTree) {
-      if (t.type === 'blob' && /^requirements.*\.(txt|in)$/i.test(t.path)) {
-        const text = await reader.read(t.path);
-        if (text) {
-          sawManifest = true;
-          text.split('\n').map(reqName).forEach((n) => n && deps.add(n));
+    // requirements*.txt, following "-r other.txt" / "-c constraints.txt" includes
+    const seen = new Set<string>();
+    const readReq = async (file: string, depth: number) => {
+      if (seen.has(file) || depth > 4) return;
+      seen.add(file);
+      const text = await reader.read(file);
+      if (!text) return;
+      sawManifest = true;
+      const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : '';
+      for (const line of text.split('\n')) {
+        const inc = line.trim().match(/^(?:-r|-c|--requirement|--constraint)\s*=?\s*(\S+)/);
+        if (inc) await readReq(normalizePath(dir + inc[1]), depth + 1);
+        else {
+          const n = reqName(line);
+          if (n) deps.add(n);
         }
       }
+    };
+    for (const t of rootTree) {
+      if (t.type === 'blob' && /^requirements.*\.(txt|in)$/i.test(t.path)) await readReq(t.path, 0);
     }
     if (rootNames.has('pyproject.toml')) {
       const pyproject = await reader.read('pyproject.toml');
@@ -145,6 +172,7 @@ export async function loadManifests(reader: RepoReader, files: ChangedFile[]): P
         }
       };
       addTree(rootTree);
+      localDirs.forEach((d) => local.add(d));
       if (rootNames.has('src')) addTree(await reader.list('src'));
       for (const dir of new Set(pyFiles.map((p) => p.split('/').slice(0, -1).join('/')).filter(Boolean))) {
         addTree(await reader.list(dir));

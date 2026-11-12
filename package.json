@@ -1,6 +1,6 @@
 {
   "name": "fairpr",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Fair PR checks for the AI era: stop AI-slop pull requests without punishing honest contributors.",
   "scripts": {
     "build": "npm run build:action && npm run build:cli && npm run build:bench",

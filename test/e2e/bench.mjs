@@ -27,6 +27,8 @@ const pulls = [
   good(8, false),
   { ...good(9), author_association: 'MEMBER' },                       // maintainer: skipped
   { ...good(10), user: { login: 'renovate[bot]', type: 'Bot' } },       // bot: skipped
+  { ...good(12), author_association: 'CONTRIBUTOR', user: { login: 'firstmerge', type: 'User' } },  // first merged PR: counted
+  { ...good(13), author_association: 'CONTRIBUTOR', user: { login: 'regular', type: 'User' } },     // had earlier merges: skipped
   { ...good(11), created_at: iso(900) },                                // older than --since: stops
 ];
 const files = (n) => {
@@ -44,6 +46,7 @@ const files = (n) => {
 };
 
 let throttledOnce = false;
+const searches = [];
 let requests = 0;
 const server = http.createServer((req, res) => {
   requests++;
@@ -51,11 +54,18 @@ const server = http.createServer((req, res) => {
   const send = (code, data, headers = {}) => { res.writeHead(code, { 'content-type': 'application/json', 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': String(Math.floor(now / 1000) + 3600), ...headers }); res.end(JSON.stringify(data)); };
   const p = url.pathname;
   let m;
+  if (p === '/rate_limit') {
+    return req.headers.authorization?.includes('bad') ? send(401, { message: 'Bad credentials' }) : send(200, { resources: {} });
+  }
   if (p === '/repos/o/r/pulls') {
     if (!throttledOnce) { throttledOnce = true; return send(429, { message: 'slow down' }, { 'retry-after': '1' }); }
     return send(200, url.searchParams.get('page') === '1' ? pulls : []);
   }
   if ((m = p.match(/^\/repos\/o\/r\/pulls\/(\d+)\/files$/))) return send(200, files(+m[1]));
+  if (p === '/search/issues') {
+    searches.push(url.searchParams.get('q'));
+    return send(200, { total_count: url.searchParams.get('q').includes('author:firstmerge') ? 0 : 3, items: [] });
+  }
   if ((m = p.match(/^\/users\/(.+)$/))) return send(200, { created_at: iso(1000) });
   if (p.startsWith('/repos/o/r/git/trees/')) return send(200, { tree: [{ path: 'package.json', type: 'blob' }] });
   if (p === '/repos/o/r/contents/package.json') return send(200, { type: 'file', encoding: 'base64', content: b64(JSON.stringify({ dependencies: { axios: '1' } })) });
@@ -67,9 +77,9 @@ await new Promise((r) => server.once('listening', r));
 const port = server.address().port;
 
 const out = fs.mkdtempSync(path.join(os.tmpdir(), 'fairpr-bench-'));
-const run = (args) => new Promise((resolve) => {
+const run = (args, token = 'fake') => new Promise((resolve) => {
   const c = spawn(process.execPath, [path.join(root, 'bench/fairpr-bench.js'), ...args], {
-    env: { PATH: process.env.PATH, GITHUB_TOKEN: 'fake', GITHUB_API_URL: `http://127.0.0.1:${port}`, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' },
+    env: { PATH: process.env.PATH, GITHUB_TOKEN: token, GITHUB_API_URL: `http://127.0.0.1:${port}`, NO_PROXY: '127.0.0.1', no_proxy: '127.0.0.1' },
   });
   let log = '';
   c.stdout.on('data', (d) => (log += d));
@@ -83,7 +93,11 @@ try {
   assert.match(r.log, /slow down; waiting/, 'should wait and retry on 429');
   assert.match(r.log, /missing\/repo: .*skipping repo|could not list PRs/, r.log);
   const rows = fs.readFileSync(path.join(out, 'results.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.equal(rows.length, 8, 'maintainer, bot and old PRs are excluded');
+  assert.equal(rows.length, 9, 'maintainer, bot, old PRs and returning contributors are excluded');
+  assert.ok(rows.some((x) => x.number === 12 && x.group === 'merged'), 'first merged PR of a now-"contributor" is counted');
+  assert.ok(!rows.some((x) => x.number === 13), 'returning contributors are not counted');
+  assert.equal(searches.length, 2);
+  assert.match(searches[0], /^repo:o\/r is:pr is:merged author:firstmerge merged:</);
   const byNum = Object.fromEntries(rows.map((x) => [x.number, x]));
   assert.equal(byNum[1].group, 'merged');
   assert.equal(byNum[1].verdict, 'verified');
@@ -91,26 +105,29 @@ try {
   assert.equal(byNum[5].verdict, 'quarantine');
   assert.equal(byNum[6].group, 'labeled-low-quality');
   assert.equal(byNum[7].group, 'labeled-low-quality');
-  assert.ok(byNum[5].findings.some((f) => f.id === 'unknown-imports'));
-  console.log('✓ samples first-time PRs, skips bots/maintainers/old PRs, groups by outcome');
+  assert.ok(byNum[5].findings.some((f) => f.id === 'unknown-imports' && f.detail.includes('not-a-real-pkg')), 'finding details are recorded');
+  console.log('✓ samples first-time PRs (incl. first merged PRs of now-"contributors"), skips bots/maintainers/old PRs');
   console.log('✓ retries after GitHub rate limiting');
 
   const report = fs.readFileSync(path.join(out, 'REPORT.md'), 'utf8');
   assert.match(report, /\*\*100\.0%\*\* of PRs that maintainers labeled spam\/invalid\/AI slop were put on hold/);
-  assert.match(report, /\*\*0\.0%\*\* of PRs that were \*\*merged\*\* were put on hold/);
+  assert.match(report, /\*\*0\.0%\*\* of PRs that were \*\*merged\*\* were put on hold.*n=5/);
   assert.match(report, /95% CI/);
   assert.match(report, /## Method and limits/);
   console.log('✓ report has headline numbers, confidence intervals and method notes');
 
-  const before = requests;
-  r = await run(['--repos', 'o/r', '--per-repo', '8', '--out', out, '--since', iso(30).slice(0, 10)]);
+  const before = requests + 1; // +1 for the token check
+  r = await run(['--repos', 'o/r', '--per-repo', '4', '--out', out, '--since', iso(30).slice(0, 10)]);
   assert.equal(r.code, 0, r.log);
-  assert.match(r.log, /already have 8, skipping/);
+  assert.match(r.log, /already have 9, skipping/);
   assert.ok(requests - before <= 1, 'resumed run must not re-download measured PRs');
   console.log('✓ resumes without re-measuring');
 
   r = await run(['--report-only', '--out', out]);
   assert.equal(r.code, 0, r.log);
+  r = await run(['--repos', 'o/r', '--out', out + '-bad'], 'bad-token');
+  assert.equal(r.code, 2);
+  assert.match(r.log, /GitHub rejected the token/);
   r = await run(['--repos', 'not a repo']);
   assert.equal(r.code, 2);
   console.log('✓ --report-only works and bad input is rejected');

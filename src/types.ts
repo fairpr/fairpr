@@ -35,6 +35,12 @@ export interface Manifests {
   /** Path aliases from tsconfig (e.g. "@/", "~/") that are not packages. */
   jsAliases?: string[];
   /**
+   * Folder names that exist in the repo near the changed code (root, src/, and every
+   * folder on the changed files' paths). Big projects import their own folders as
+   * bare names (VS Code: "vs/base/..."), which must not be reported as packages.
+   */
+  localDirs?: Set<string>;
+  /**
    * True when we could not see every relevant manifest (monorepo workspaces,
    * setup.py-only projects...). Unknown imports are then reported as hints,
    * never as signals, to avoid false accusations.

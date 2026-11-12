@@ -13,7 +13,7 @@ import {
   localReader, mergeBase, readAt, remoteRepo, repoRoot, targetRemote,
 } from './git';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 
 const HELP = `FairPR ${VERSION}: check your pull request against a project's contribution policy before you open it.
 

@@ -220,3 +220,45 @@ describe('decide', () => {
     expect(decide([s, { ...s, id: 'z' }])).toBe('quarantine');
   });
 });
+
+import { loadManifests } from '../src/manifests';
+
+describe('false alarms found by the benchmark', () => {
+  const reader = (files: Record<string, string>, dirs: Record<string, { path: string; type: string }[]>) => ({
+    read: async (p: string) => files[p],
+    list: async (d: string) => dirs[d] ?? [],
+  });
+
+  it('does not flag imports of the project\'s own folders (VS Code "vs/...")', async () => {
+    const changed = [file('src/vs/editor/browser/widget.ts', ["import { Emitter } from 'vs/base/common/event';", "import x from 'left-pad-ai';"])];
+    const manifests = await loadManifests(
+      reader({ 'package.json': JSON.stringify({ name: 'code-oss', dependencies: {} }) }, { '': [{ path: 'package.json', type: 'blob' }, { path: 'src', type: 'tree' }], src: [{ path: 'vs', type: 'tree' }] }),
+      changed,
+    );
+    const r = evaluate(ctx({ files: changed, manifests }), policy());
+    const f = r.findings.find((x) => x.id === 'unknown-imports');
+    expect(f?.detail).toContain('left-pad-ai');
+    expect(f?.detail).not.toContain('`vs`');
+  });
+
+  it('follows "-r" includes in requirements files (Home Assistant style)', async () => {
+    const changed = [file('tests/components/alert/test_init.py', ['from freezegun import freeze_time', 'import made_up_lib'])];
+    const manifests = await loadManifests(
+      reader(
+        {
+          'requirements_test.txt': '-r requirements.txt\n-c constraints/base.txt\npytest==8.0\n',
+          'requirements.txt': '-r requirements_core.txt\n',
+          'requirements_core.txt': 'freezegun==1.5\n',
+          'constraints/base.txt': 'urllib3<3\n',
+        },
+        { '': [{ path: 'requirements_test.txt', type: 'blob' }, { path: 'requirements.txt', type: 'blob' }, { path: 'tests', type: 'tree' }] },
+      ),
+      changed,
+    );
+    expect(manifests.python?.has('freezegun')).toBe(true);
+    expect(manifests.python?.has('urllib3')).toBe(true);
+    const f = evaluate(ctx({ files: changed, manifests }), policy()).findings.find((x) => x.id === 'unknown-imports');
+    expect(f?.detail).toContain('made_up_lib');
+    expect(f?.detail).not.toContain('freezegun');
+  });
+});

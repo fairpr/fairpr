@@ -108,6 +108,22 @@ function installRateLimiter(octokit: Octokit, log: (s: string) => void) {
   });
 }
 
+let lastSearch = 0;
+/** True if `login` had no merged PR in `repo` before `mergedAt`. Uses the search API (30 requests/min). */
+async function isFirstMerged(octokit: Octokit, repo: string, login: string, mergedAt: string, log: (s: string) => void): Promise<boolean> {
+  const wait = lastSearch + 2200 - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastSearch = Date.now();
+  try {
+    const before = new Date(Date.parse(mergedAt) - 1000).toISOString().slice(0, 19);
+    const res = await octokit.rest.search.issuesAndPullRequests({ q: `repo:${repo} is:pr is:merged author:${login} merged:<${before}`, per_page: 1 });
+    return res.data.total_count === 0;
+  } catch (e) {
+    log(`  search failed for @${login} (${(e as Error).message}); not counting this PR`);
+    return false;
+  }
+}
+
 function loadDone(file: string): Map<string, BenchRecord> {
   const done = new Map<string, BenchRecord>();
   if (!fs.existsSync(file)) return done;
@@ -129,6 +145,13 @@ export async function runBenchmark(octokit: Octokit, opts: Options, log: (s: str
   const done = loadDone(file);
   if (opts.reportOnly) return [...done.values()];
 
+  try {
+    await octokit.rest.rateLimit.get();
+  } catch (e) {
+    if ((e as { status?: number }).status === 401) {
+      throw new Error('GitHub rejected the token ("Bad credentials"). Check GITHUB_TOKEN: no quotes, no spaces, the full github_pat_... value.');
+    }
+  }
   installRateLimiter(octokit, log);
   const ageCache = new Map<string, number | undefined>();
   const since = Date.parse(opts.since);
@@ -136,16 +159,20 @@ export async function runBenchmark(octokit: Octokit, opts: Options, log: (s: str
   for (const full of opts.repos) {
     const [owner, repo] = full.split('/');
     const r = { owner, repo };
-    let have = [...done.values()].filter((x) => x.repo === full).length;
-    if (have >= opts.perRepo) {
-      log(`${full}: already have ${have}, skipping`);
+    const mine = [...done.values()].filter((x) => x.repo === full);
+    // Up to perRepo merged AND up to perRepo not-merged PRs, so both sides are measured fairly.
+    let haveMerged = mine.filter((x) => x.group === 'merged').length;
+    let haveOther = mine.length - haveMerged;
+    const full_ = () => haveMerged >= opts.perRepo && haveOther >= opts.perRepo;
+    if (full_()) {
+      log(`${full}: already have ${mine.length}, skipping`);
       continue;
     }
     log(`${full}: collecting first-time contributor PRs closed since ${opts.since}…`);
 
     let page = 1;
     let reachedOld = false;
-    while (have < opts.perRepo && !reachedOld && page <= 30) {
+    while (!full_() && !reachedOld && page <= 40) {
       let pulls;
       try {
         ({ data: pulls } = await octokit.rest.pulls.list({ ...r, state: 'closed', sort: 'created', direction: 'desc', per_page: 100, page }));
@@ -157,17 +184,24 @@ export async function runBenchmark(octokit: Octokit, opts: Options, log: (s: str
       page++;
 
       for (const pr of pulls) {
-        if (have >= opts.perRepo) break;
+        if (full_()) break;
         if (Date.parse(pr.created_at) < since) { reachedOld = true; break; }
         const key = `${full}#${pr.number}`;
         if (done.has(key)) continue;
         const login = pr.user?.login ?? 'ghost';
         if (pr.user?.type === 'Bot' || login.endsWith('[bot]')) continue;
-        if (!FIRST_TIME.has(pr.author_association)) continue;
         if (pr.draft) continue;
-
         const labels = (pr.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name ?? '')).filter(Boolean);
         const group: Group = labels.some((l) => LOW_QUALITY_LABEL.test(l)) ? 'labeled-low-quality' : pr.merged_at ? 'merged' : 'closed-unmerged';
+        if (group === 'merged' ? haveMerged >= opts.perRepo : haveOther >= opts.perRepo) continue;
+
+        let firstTime = FIRST_TIME.has(pr.author_association);
+        // GitHub reports the author's CURRENT association: after their first PR is merged they
+        // become a "CONTRIBUTOR". Count a merged PR as first-time if nothing of theirs was merged before it.
+        if (!firstTime && pr.author_association === 'CONTRIBUTOR' && pr.merged_at) {
+          firstTime = await isFirstMerged(octokit, full, login, pr.merged_at, log);
+        }
+        if (!firstTime) continue;
 
         try {
           const rawFiles = await octokit.paginate(octokit.rest.pulls.listFiles, { ...r, pull_number: pr.number, per_page: 100 }, (res, stop) => {
@@ -224,19 +258,20 @@ export async function runBenchmark(octokit: Octokit, opts: Options, log: (s: str
             labels,
             createdAt: pr.created_at,
             verdict: report.verdict,
-            findings: report.findings.map((f) => ({ id: f.id, kind: f.kind, title: f.title })),
+            findings: report.findings.map((f) => ({ id: f.id, kind: f.kind, title: f.title, detail: f.detail.slice(0, 400) })),
             changedFiles: files.length,
           };
           fs.appendFileSync(file, JSON.stringify(rec) + '\n');
           done.set(key, rec);
-          have++;
-          if (have % 10 === 0) log(`  ${have}/${opts.perRepo}`);
+          if (group === 'merged') haveMerged++;
+          else haveOther++;
+          if ((haveMerged + haveOther) % 10 === 0) log(`  merged ${haveMerged}/${opts.perRepo}, rejected ${haveOther}/${opts.perRepo}`);
         } catch (e) {
           log(`  skipped #${pr.number}: ${(e as Error).message}`);
         }
       }
     }
-    log(`${full}: ${have} PRs measured`);
+    log(`${full}: ${haveMerged} merged + ${haveOther} rejected PRs measured`);
   }
   return [...done.values()];
 }
@@ -268,7 +303,13 @@ export async function benchMain(argv = process.argv.slice(2)): Promise<number> {
   }
   const octokit = getOctokit(token ?? 'none', process.env.GITHUB_API_URL ? { baseUrl: process.env.GITHUB_API_URL } : {});
   const started = Date.now();
-  const records = await runBenchmark(octokit, opts);
+  let records: BenchRecord[];
+  try {
+    records = await runBenchmark(octokit, opts);
+  } catch (e) {
+    console.error((e as Error).message);
+    return 2;
+  }
   const reportPath = writeReport(records, opts.out, { repos: opts.repos, since: opts.since, policy: BENCH_POLICY });
   console.log(`\nMeasured ${records.length} PRs in ${Math.round((Date.now() - started) / 60000)} min.`);
   console.log(`Report: ${reportPath}`);

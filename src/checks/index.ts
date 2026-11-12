@@ -237,7 +237,8 @@ const hallucinatedImports: Check = {
         for (const line of addedLines(f)) {
           for (const spec of jsSpecifiers(line)) {
             const name = jsPackageName(spec, ctx.manifests.jsAliases);
-            if (name && !npm.has(name) && !npm.has(`@types/${name}`)) {
+            const isLocalFolder = !!name && !name.startsWith('@') && !!ctx.manifests.localDirs?.has(name);
+            if (name && !isLocalFolder && !npm.has(name) && !npm.has(`@types/${name}`)) {
               unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete });
             }
           }
