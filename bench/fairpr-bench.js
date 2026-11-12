@@ -27615,8 +27615,8 @@ function installRateLimiter(octokit, log) {
     });
     octokit.hook.after('request', (res) => {
         const h = res.headers;
-        // GitHub has separate budgets: "core" (5000/h) and "search" (30/min). Only the core budget
-        // is tracked here; searches are spaced out separately in isFirstMerged().
+        // GitHub has separate budgets ("core" 5000/h, "search" 30/min, ...). Only "core" is used
+        // by the benchmark, so only it is tracked.
         const resource = h['x-ratelimit-resource'] ?? 'core';
         if (resource !== 'core')
             return;
@@ -27641,20 +27641,21 @@ function installRateLimiter(octokit, log) {
         throw error;
     });
 }
-let lastSearch = 0;
-/** True if `login` had no merged PR in `repo` before `mergedAt`. Uses the search API (30 requests/min). */
+/**
+ * True if `login` had no commit on the default branch before `mergedAt`, i.e. this merged PR
+ * was their first contribution. Uses the commits API (normal budget; works with fine-grained
+ * tokens, unlike the search API).
+ */
 async function isFirstMerged(octokit, repo, login, mergedAt, log) {
-    const wait = lastSearch + 2200 - Date.now();
-    if (wait > 0)
-        await sleep(wait);
-    lastSearch = Date.now();
+    const [owner, name] = repo.split('/');
     try {
-        const before = new Date(Date.parse(mergedAt) - 1000).toISOString().slice(0, 19);
-        const res = await octokit.rest.search.issuesAndPullRequests({ q: `repo:${repo} is:pr is:merged author:${login} merged:<${before}`, per_page: 1 });
-        return res.data.total_count === 0;
+        // The PR's own commits land at merge time, so only look at commits from before the merge.
+        const until = new Date(Date.parse(mergedAt) - 2 * 60 * 1000).toISOString();
+        const res = await octokit.rest.repos.listCommits({ owner, repo: name, author: login, until, per_page: 1 });
+        return res.data.length === 0;
     }
     catch (e) {
-        log(`  search failed for @${login} (${e.message}); not counting this PR`);
+        log(`  could not check history for @${login} (${e.message}); not counting this PR`);
         return false;
     }
 }
@@ -28011,7 +28012,7 @@ function buildReport(records, meta) {
     list('Labeled low-quality PRs that FairPR verified (missed)', labeled.filter((r) => r.verdict === 'verified'));
     list('Examples: closed PRs put on hold', closed.filter((r) => r.verdict === 'quarantine'), 15);
     // ---- method
-    lines.push('## Method and limits', '', `- Repositories: ${meta.repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the search API confirmed it was their first merged PR there.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
+    lines.push('## Method and limits', '', `- Repositories: ${meta.repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
     return lines.join('\n');
 }
 function writeReport(records, outDir, meta) {

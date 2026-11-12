@@ -62,10 +62,9 @@ const server = http.createServer((req, res) => {
     return send(200, url.searchParams.get('page') === '1' ? pulls : []);
   }
   if ((m = p.match(/^\/repos\/o\/r\/pulls\/(\d+)\/files$/))) return send(200, files(+m[1]));
-  if (p === '/search/issues') {
-    searches.push(url.searchParams.get('q'));
-    // Search has its own small budget; it must not make the tool think the main budget is used up.
-    return send(200, { total_count: url.searchParams.get('q').includes('author:firstmerge') ? 0 : 3, items: [] }, { 'x-ratelimit-resource': 'search', 'x-ratelimit-remaining': '28', 'x-ratelimit-reset': String(Math.floor(now / 1000) + 60) });
+  if (p === '/repos/o/r/commits') {
+    searches.push(url.searchParams.toString());
+    return send(200, url.searchParams.get('author') === 'firstmerge' ? [] : [{ sha: 'old' }]);
   }
   if ((m = p.match(/^\/users\/(.+)$/))) return send(200, { created_at: iso(1000) });
   if (p.startsWith('/repos/o/r/git/trees/')) return send(200, { tree: [{ path: 'package.json', type: 'blob' }] });
@@ -99,7 +98,8 @@ try {
   assert.ok(rows.some((x) => x.number === 12 && x.group === 'merged'), 'first merged PR of a now-"contributor" is counted');
   assert.ok(!rows.some((x) => x.number === 13), 'returning contributors are not counted');
   assert.equal(searches.length, 2);
-  assert.match(searches[0], /^repo:o\/r is:pr is:merged author:firstmerge merged:</);
+  assert.match(searches[0], /author=firstmerge/);
+  assert.match(searches[0], /until=/);
   const byNum = Object.fromEntries(rows.map((x) => [x.number, x]));
   assert.equal(byNum[1].group, 'merged');
   assert.equal(byNum[1].verdict, 'verified');

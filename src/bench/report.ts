@@ -132,7 +132,7 @@ export function buildReport(records: BenchRecord[], meta: { repos: string[]; sin
     `- Repositories: ${meta.repos.join(', ')}.`,
     '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.',
     '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.',
-    '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the search API confirmed it was their first merged PR there.',
+    '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.',
     '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.',
     `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`,
     '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.',

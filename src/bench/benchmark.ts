@@ -88,8 +88,8 @@ function installRateLimiter(octokit: Octokit, log: (s: string) => void) {
   });
   octokit.hook.after('request', (res) => {
     const h = res.headers as Record<string, string | undefined>;
-    // GitHub has separate budgets: "core" (5000/h) and "search" (30/min). Only the core budget
-    // is tracked here; searches are spaced out separately in isFirstMerged().
+    // GitHub has separate budgets ("core" 5000/h, "search" 30/min, ...). Only "core" is used
+    // by the benchmark, so only it is tracked.
     const resource = h['x-ratelimit-resource'] ?? 'core';
     if (resource !== 'core') return;
     if (h['x-ratelimit-remaining']) remaining = Number(h['x-ratelimit-remaining']);
@@ -112,18 +112,20 @@ function installRateLimiter(octokit: Octokit, log: (s: string) => void) {
   });
 }
 
-let lastSearch = 0;
-/** True if `login` had no merged PR in `repo` before `mergedAt`. Uses the search API (30 requests/min). */
+/**
+ * True if `login` had no commit on the default branch before `mergedAt`, i.e. this merged PR
+ * was their first contribution. Uses the commits API (normal budget; works with fine-grained
+ * tokens, unlike the search API).
+ */
 async function isFirstMerged(octokit: Octokit, repo: string, login: string, mergedAt: string, log: (s: string) => void): Promise<boolean> {
-  const wait = lastSearch + 2200 - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastSearch = Date.now();
+  const [owner, name] = repo.split('/');
   try {
-    const before = new Date(Date.parse(mergedAt) - 1000).toISOString().slice(0, 19);
-    const res = await octokit.rest.search.issuesAndPullRequests({ q: `repo:${repo} is:pr is:merged author:${login} merged:<${before}`, per_page: 1 });
-    return res.data.total_count === 0;
+    // The PR's own commits land at merge time, so only look at commits from before the merge.
+    const until = new Date(Date.parse(mergedAt) - 2 * 60 * 1000).toISOString();
+    const res = await octokit.rest.repos.listCommits({ owner, repo: name, author: login, until, per_page: 1 });
+    return res.data.length === 0;
   } catch (e) {
-    log(`  search failed for @${login} (${(e as Error).message}); not counting this PR`);
+    log(`  could not check history for @${login} (${(e as Error).message}); not counting this PR`);
     return false;
   }
 }
