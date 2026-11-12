@@ -176,6 +176,17 @@ Tip: add that line to your `.github/pull_request_template.md`.
 - PR text is treated as data. No AI model decides the verdict, so prompt injection in a PR can't approve it.
 - No external services, no data storage. Everything lives in your repo's comments and labels.
 
+## Benchmark on real PRs
+
+`bench/fairpr-bench.js` runs FairPR on closed PRs from first-time contributors in public repositories and compares the verdicts with what maintainers actually did (merged, closed, or labeled spam/invalid). It reports false-alarm rates on merged PRs with confidence intervals, and lists every merged PR it would have put on hold so you can check them yourself.
+
+```bash
+GITHUB_TOKEN=<read-only token> node bench/fairpr-bench.js --per-repo 100
+# options: --repos owner/a,owner/b  --since 2025-06-01  --out bench-results  --report-only
+```
+
+Results go to `bench-results/REPORT.md` and `bench-results/results.jsonl`. Interrupted runs resume where they stopped.
+
 ## Development
 
 ```bash

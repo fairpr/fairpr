@@ -3,12 +3,14 @@
   "version": "0.3.0",
   "description": "Fair PR checks for the AI era: stop AI-slop pull requests without punishing honest contributors.",
   "scripts": {
-    "build": "npm run build:action && npm run build:cli",
+    "build": "npm run build:action && npm run build:cli && npm run build:bench",
     "build:action": "tsc --noEmit && ncc build src/main.ts -o dist --license licenses.txt",
     "build:cli": "ncc build src/cli/bin.ts -o .cli-build && node scripts/finish-cli.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "node test/e2e/mock-github.mjs && node test/e2e/cli.mjs"
+    "e2e": "node test/e2e/mock-github.mjs && node test/e2e/cli.mjs && node test/e2e/bench.mjs",
+    "build:bench": "ncc build src/bench/bin.ts -o bench --license licenses.txt && node -e \"require('fs').renameSync('bench/index.js','bench/fairpr-bench.js')\"",
+    "bench": "node bench/fairpr-bench.js"
   },
   "keywords": [
     "github-action",
