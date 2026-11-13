@@ -7,6 +7,10 @@ Maintainers are drowning in AI-generated PRs that look polished but don't work. 
 - **For maintainers:** a GitHub Action that checks every PR against your policy and explains what to fix.
 - **For contributors (and their AI agents):** `npx fairpr check` runs the same checks *before* you open the PR and adds a proof that maintainers can verify.
 
+![FairPR demo: a sloppy change is caught locally, fixed, verified by the Action; a slop PR is put on hold](docs/demo.gif)
+
+**Tested on 972 real PRs:** 0 of 316 merged PRs were put on hold. [Benchmark](docs/benchmark/REPORT.md)
+
 ### For maintainers
 
 - ✅ **Checks every PR against *your* contribution policy** (AI disclosure, linked issue, size, tests)
