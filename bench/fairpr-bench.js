@@ -28037,7 +28037,7 @@ const hasSignal = (r) => r.findings.some((f) => f.kind === 'signal');
 const FINISHED_TEXT = {
     quota: 'reached the sample size',
     'no-older-prs': 'all PRs since the start date were checked',
-    'no-more-prs': 'all closed PRs were checked',
+    'no-more-prs': "GitHub's list of closed PRs ended early",
     'page-limit': 'stopped after 4,000 newest closed PRs',
     error: 'GitHub returned an error',
 };
@@ -28048,7 +28048,7 @@ function explainRepo(repo, n, st) {
     const parts = [FINISHED_TEXT[st.finished] ?? st.finished];
     const notFirst = (s.returning_contributor ?? 0) + (s.maintainer ?? 0);
     if (s.listed)
-        parts.push(`${s.listed} PRs looked at, ${notFirst} by maintainers or returning contributors, ${s.bot ?? 0} by bots`);
+        parts.push(`${s.listed} PRs listed, ${notFirst} by maintainers or returning contributors, ${s.bot ?? 0} by bots`);
     return parts.join('; ');
 }
 function buildReport(records, meta) {
@@ -28127,7 +28127,7 @@ function buildReport(records, meta) {
     list('Labeled low-quality PRs that FairPR verified (missed)', labeled.filter((r) => r.verdict === 'verified'));
     list('Examples: closed PRs put on hold', closed.filter((r) => r.verdict === 'quarantine'), 15);
     // ---- method
-    lines.push('## Method and limits', '', `- Repositories measured: ${repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
+    lines.push('## Method and limits', '', `- Repositories measured: ${repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- Some projects (for example curl) accept changes by pushing the commit themselves and closing the PR, so GitHub shows those PRs as "closed without merging" even though the change was accepted.', "- For a few very large repositories (VS Code, Home Assistant) GitHub's API stopped returning closed PRs after a few hundred, and most of those were by maintainers or returning contributors, so their samples are small.", '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
     return lines.join('\n');
 }
 function writeReport(records, outDir, meta) {

@@ -1,0 +1,32 @@
+{
+  "microsoft/vscode": {
+    "finished": "no-more-prs",
+    "at": "2026-11-13T04:14:34.907Z",
+    "stats": {
+      "listed": 400,
+      "measured": 3,
+      "already_measured": 0,
+      "bot": 21,
+      "draft": 15,
+      "quota_full": 0,
+      "returning_contributor": 95,
+      "maintainer": 266,
+      "error": 0
+    }
+  },
+  "home-assistant/core": {
+    "finished": "no-more-prs",
+    "at": "2026-11-13T04:21:18.581Z",
+    "stats": {
+      "listed": 200,
+      "measured": 0,
+      "already_measured": 6,
+      "bot": 12,
+      "draft": 6,
+      "quota_full": 0,
+      "returning_contributor": 157,
+      "maintainer": 19,
+      "error": 0
+    }
+  }
+}

@@ -178,6 +178,13 @@ Tip: add that line to your `.github/pull_request_template.md`.
 
 ## Benchmark on real PRs
 
+**Results (November 2026):** 972 closed PRs from first-time contributors in 10 projects (Godot, curl, Ghostty, Excalidraw, n8n, LangChain, Next.js, VS Code, Home Assistant, React).
+
+- **0 of 316 merged PRs were put on hold** (95% CI 0–1.2%). FairPR does not get in the way of good contributions.
+- **4 of 28 PRs that maintainers labeled spam were put on hold (14%).** Most of the missed ones were clean, well-formed agent PRs. No detector can reliably spot those from the code alone, which is why FairPR relies on an AI disclosure line and a verifiable proof of local testing rather than guessing.
+
+Full report: [docs/benchmark/REPORT.md](docs/benchmark/REPORT.md). Every per-PR result is in [docs/benchmark/results.jsonl](docs/benchmark/results.jsonl) so you can check them yourself.
+
 `bench/fairpr-bench.js` runs FairPR on closed PRs from first-time contributors in public repositories and compares the verdicts with what maintainers actually did (merged, closed, or labeled spam/invalid). It reports false-alarm rates on merged PRs with confidence intervals, and lists every merged PR it would have put on hold so you can check them yourself.
 
 ```bash
