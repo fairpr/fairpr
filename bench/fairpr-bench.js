@@ -27564,7 +27564,7 @@ exports.DEFAULT_REPOS = [
 const FIRST_TIME = new Set(['FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE']);
 const LOW_QUALITY_LABEL = /spam|invalid|slop|ai[\s_-]*generated|low[\s_-]*(quality|effort)|llm|automated/i;
 function parseBenchArgs(argv) {
-    const o = { repos: exports.DEFAULT_REPOS, perRepo: 100, since: '2025-06-01', out: 'bench-results', reportOnly: false };
+    const o = { repos: exports.DEFAULT_REPOS, perRepo: 100, since: '2025-06-01', out: 'bench-results', reportOnly: false, rescan: false };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         const v = () => {
@@ -27583,6 +27583,10 @@ function parseBenchArgs(argv) {
             o.out = v();
         else if (a === '--report-only')
             o.reportOnly = true;
+        else if (a === '--remeasure')
+            o.remeasure = v();
+        else if (a === '--rescan')
+            o.rescan = true;
         else
             throw new Error(`Unknown option ${a}`);
     }
@@ -27676,10 +27680,91 @@ function loadDone(file) {
     }
     return done;
 }
+function loadState(file) {
+    try {
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+    }
+    catch {
+        return {};
+    }
+}
+const groupOf = (labels, merged) => labels.some((l) => LOW_QUALITY_LABEL.test(l)) ? 'labeled-low-quality' : merged ? 'merged' : 'closed-unmerged';
+/** Run FairPR on one PR exactly like the Action would and return the record. */
+async function measure(octokit, full, pr, ageCache) {
+    const [owner, repo] = full.split('/');
+    const r = { owner, repo };
+    const login = pr.user?.login ?? 'ghost';
+    const labels = (pr.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name ?? '')).filter(Boolean);
+    const rawFiles = await octokit.paginate(octokit.rest.pulls.listFiles, { ...r, pull_number: pr.number, per_page: 100 }, (res, stop) => {
+        if (res.data.length < 100)
+            stop();
+        return res.data;
+    });
+    const files = rawFiles.slice(0, 300).map((f) => ({
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        patch: f.patch,
+        sha: f.status === 'removed' ? undefined : f.sha,
+    }));
+    if (!ageCache.has(login)) {
+        try {
+            const { data: u } = await octokit.rest.users.getByUsername({ username: login });
+            ageCache.set(login, Math.floor((Date.parse(pr.created_at) - Date.parse(u.created_at)) / 86_400_000));
+        }
+        catch {
+            ageCache.set(login, undefined);
+        }
+    }
+    let manifests = {};
+    try {
+        manifests = await (0, manifests_1.loadManifests)((0, github_2.apiReader)(octokit, r, pr.head.sha), files);
+    }
+    catch {
+        /* head commit may be gone; the import check is then skipped */
+    }
+    const ctx = {
+        number: pr.number,
+        title: pr.title,
+        body: pr.body ?? '',
+        author: {
+            login,
+            accountAgeDays: ageCache.get(login),
+            isBot: false,
+            isFirstTimeContributor: true,
+            isMaintainer: false,
+            // Historical "PRs opened in 24h" cannot be reconstructed reliably, so the spray check is not measured.
+            prsOpenedLast24h: undefined,
+        },
+        files,
+        manifests,
+    };
+    const report = (0, engine_1.evaluate)(ctx, exports.BENCH_POLICY);
+    return {
+        repo: full,
+        number: pr.number,
+        url: pr.html_url,
+        title: pr.title,
+        group: groupOf(labels, !!pr.merged_at),
+        labels,
+        createdAt: pr.created_at,
+        verdict: report.verdict,
+        findings: report.findings.map((f) => ({ id: f.id, kind: f.kind, title: f.title, detail: f.detail.slice(0, 400) })),
+        changedFiles: files.length,
+    };
+}
+function saveAll(file, done) {
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, [...done.values()].map((r) => JSON.stringify(r)).join('\n') + '\n');
+    fs.renameSync(tmp, file);
+}
 async function runBenchmark(octokit, opts, log = console.log) {
     fs.mkdirSync(opts.out, { recursive: true });
     const file = path.join(opts.out, 'results.jsonl');
+    const stateFile = path.join(opts.out, 'state.json');
     const done = loadDone(file);
+    const state = loadState(stateFile);
     if (opts.reportOnly)
         return [...done.values()];
     try {
@@ -27692,6 +27777,29 @@ async function runBenchmark(octokit, opts, log = console.log) {
     }
     installRateLimiter(octokit, log);
     const ageCache = new Map();
+    // ---- re-measure saved PRs after a check was improved
+    if (opts.remeasure) {
+        const targets = [...done.values()].filter((x) => x.findings.some((f) => f.id === opts.remeasure) && opts.repos.includes(x.repo));
+        log(`Re-measuring ${targets.length} saved PR(s) that had "${opts.remeasure}"…`);
+        let changed = 0;
+        for (const t of targets) {
+            const [owner, repo] = t.repo.split('/');
+            try {
+                const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: t.number });
+                const rec = await measure(octokit, t.repo, pr, ageCache);
+                rec.group = t.group; // keep the original sampling decision
+                if (rec.verdict !== t.verdict || JSON.stringify(rec.findings) !== JSON.stringify(t.findings))
+                    changed++;
+                done.set(`${t.repo}#${t.number}`, rec);
+            }
+            catch (e) {
+                log(`  could not re-measure ${t.repo}#${t.number}: ${e.message}`);
+            }
+        }
+        saveAll(file, done);
+        log(`Re-measured ${targets.length}; ${changed} result(s) changed.`);
+        return [...done.values()];
+    }
     const since = Date.parse(opts.since);
     for (const full of opts.repos) {
         const [owner, repo] = full.split('/');
@@ -27700,114 +27808,90 @@ async function runBenchmark(octokit, opts, log = console.log) {
         // Up to perRepo merged AND up to perRepo not-merged PRs, so both sides are measured fairly.
         let haveMerged = mine.filter((x) => x.group === 'merged').length;
         let haveOther = mine.length - haveMerged;
-        const full_ = () => haveMerged >= opts.perRepo && haveOther >= opts.perRepo;
-        if (full_()) {
+        const quotaFull = () => haveMerged >= opts.perRepo && haveOther >= opts.perRepo;
+        if (quotaFull()) {
             log(`${full}: already have ${mine.length}, skipping`);
             continue;
         }
+        if (state[full] && !opts.rescan && state[full].finished !== 'error') {
+            log(`${full}: searched completely before (${state[full].finished}); skipping. Use --rescan to search again.`);
+            continue;
+        }
         log(`${full}: collecting first-time contributor PRs closed since ${opts.since}…`);
+        // Why PRs were or were not measured, so the report can explain small samples.
+        const stats = {
+            listed: 0, measured: 0, already_measured: 0, bot: 0, draft: 0, quota_full: 0, returning_contributor: 0, maintainer: 0, error: 0,
+        };
+        let finished = 'page-limit';
         let page = 1;
-        let reachedOld = false;
-        while (!full_() && !reachedOld && page <= 40) {
+        while (page <= 40) {
+            if (quotaFull()) {
+                finished = 'quota';
+                break;
+            }
             let pulls;
             try {
                 ({ data: pulls } = await octokit.rest.pulls.list({ ...r, state: 'closed', sort: 'created', direction: 'desc', per_page: 100, page }));
             }
             catch (e) {
                 log(`  could not list PRs (${e.message}); skipping repo`);
+                finished = 'error';
                 break;
             }
-            if (pulls.length === 0)
+            if (pulls.length === 0) {
+                finished = 'no-more-prs';
                 break;
+            }
             page++;
+            let reachedOld = false;
             for (const pr of pulls) {
-                if (full_())
+                if (quotaFull())
                     break;
                 if (Date.parse(pr.created_at) < since) {
                     reachedOld = true;
                     break;
                 }
+                stats.listed++;
                 const key = `${full}#${pr.number}`;
-                if (done.has(key))
+                if (done.has(key)) {
+                    stats.already_measured++;
                     continue;
+                }
                 const login = pr.user?.login ?? 'ghost';
-                if (pr.user?.type === 'Bot' || login.endsWith('[bot]'))
+                if (pr.user?.type === 'Bot' || login.endsWith('[bot]')) {
+                    stats.bot++;
                     continue;
-                if (pr.draft)
+                }
+                if (pr.draft) {
+                    stats.draft++;
                     continue;
+                }
                 const labels = (pr.labels ?? []).map((l) => (typeof l === 'string' ? l : l.name ?? '')).filter(Boolean);
-                const group = labels.some((l) => LOW_QUALITY_LABEL.test(l)) ? 'labeled-low-quality' : pr.merged_at ? 'merged' : 'closed-unmerged';
-                if (group === 'merged' ? haveMerged >= opts.perRepo : haveOther >= opts.perRepo)
+                const group = groupOf(labels, !!pr.merged_at);
+                if (group === 'merged' ? haveMerged >= opts.perRepo : haveOther >= opts.perRepo) {
+                    stats.quota_full++;
                     continue;
-                let firstTime = FIRST_TIME.has(pr.author_association);
+                }
+                const assoc = pr.author_association;
+                if (assoc === 'OWNER' || assoc === 'MEMBER' || assoc === 'COLLABORATOR') {
+                    stats.maintainer++;
+                    continue;
+                }
+                let firstTime = FIRST_TIME.has(assoc);
                 // GitHub reports the author's CURRENT association: after their first PR is merged they
                 // become a "CONTRIBUTOR". Count a merged PR as first-time if nothing of theirs was merged before it.
-                if (!firstTime && pr.author_association === 'CONTRIBUTOR' && pr.merged_at) {
+                if (!firstTime && assoc === 'CONTRIBUTOR' && pr.merged_at) {
                     firstTime = await isFirstMerged(octokit, full, login, pr.merged_at, log);
                 }
-                if (!firstTime)
+                if (!firstTime) {
+                    stats.returning_contributor++;
                     continue;
+                }
                 try {
-                    const rawFiles = await octokit.paginate(octokit.rest.pulls.listFiles, { ...r, pull_number: pr.number, per_page: 100 }, (res, stop) => {
-                        if (res.data.length < 100)
-                            stop();
-                        return res.data;
-                    });
-                    const files = rawFiles.slice(0, 300).map((f) => ({
-                        filename: f.filename,
-                        status: f.status,
-                        additions: f.additions,
-                        deletions: f.deletions,
-                        patch: f.patch,
-                        sha: f.status === 'removed' ? undefined : f.sha,
-                    }));
-                    if (!ageCache.has(login)) {
-                        try {
-                            const { data: u } = await octokit.rest.users.getByUsername({ username: login });
-                            ageCache.set(login, Math.floor((Date.parse(pr.created_at) - Date.parse(u.created_at)) / 86_400_000));
-                        }
-                        catch {
-                            ageCache.set(login, undefined);
-                        }
-                    }
-                    let manifests = {};
-                    try {
-                        manifests = await (0, manifests_1.loadManifests)((0, github_2.apiReader)(octokit, r, pr.head.sha), files);
-                    }
-                    catch {
-                        /* head commit may be gone; import check is then skipped */
-                    }
-                    const ctx = {
-                        number: pr.number,
-                        title: pr.title,
-                        body: pr.body ?? '',
-                        author: {
-                            login,
-                            accountAgeDays: ageCache.get(login),
-                            isBot: false,
-                            isFirstTimeContributor: true,
-                            isMaintainer: false,
-                            // Historical "PRs opened in 24h" cannot be reconstructed reliably, so the spray check is not measured.
-                            prsOpenedLast24h: undefined,
-                        },
-                        files,
-                        manifests,
-                    };
-                    const report = (0, engine_1.evaluate)(ctx, exports.BENCH_POLICY);
-                    const rec = {
-                        repo: full,
-                        number: pr.number,
-                        url: pr.html_url,
-                        title: pr.title,
-                        group,
-                        labels,
-                        createdAt: pr.created_at,
-                        verdict: report.verdict,
-                        findings: report.findings.map((f) => ({ id: f.id, kind: f.kind, title: f.title, detail: f.detail.slice(0, 400) })),
-                        changedFiles: files.length,
-                    };
+                    const rec = await measure(octokit, full, pr, ageCache);
                     fs.appendFileSync(file, JSON.stringify(rec) + '\n');
                     done.set(key, rec);
+                    stats.measured++;
                     if (group === 'merged')
                         haveMerged++;
                     else
@@ -27816,11 +27900,21 @@ async function runBenchmark(octokit, opts, log = console.log) {
                         log(`  merged ${haveMerged}/${opts.perRepo}, rejected ${haveOther}/${opts.perRepo}`);
                 }
                 catch (e) {
+                    stats.error++;
                     log(`  skipped #${pr.number}: ${e.message}`);
                 }
             }
+            if (reachedOld) {
+                finished = 'no-older-prs';
+                break;
+            }
         }
-        log(`${full}: ${haveMerged} merged + ${haveOther} rejected PRs measured`);
+        if (quotaFull())
+            finished = 'quota';
+        log(`${full}: ${haveMerged} merged + ${haveOther} rejected PRs measured (${finished})`);
+        log(`  looked at ${stats.listed} PRs: ${Object.entries(stats).filter(([k, v]) => k !== 'listed' && v > 0).map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ') || 'none'}`);
+        state[full] = { finished, at: new Date().toISOString(), stats };
+        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
     }
     return [...done.values()];
 }
@@ -27862,7 +27956,8 @@ async function benchMain(argv = process.argv.slice(2)) {
         console.error(e.message);
         return 2;
     }
-    const reportPath = (0, report_1.writeReport)(records, opts.out, { repos: opts.repos, since: opts.since, policy: exports.BENCH_POLICY });
+    const state = loadState(path.join(opts.out, 'state.json'));
+    const reportPath = (0, report_1.writeReport)(records, opts.out, { repos: opts.repos, since: opts.since, policy: exports.BENCH_POLICY, state });
     console.log(`\nMeasured ${records.length} PRs in ${Math.round((Date.now() - started) / 60000)} min.`);
     console.log(`Report: ${reportPath}`);
     return 0;
@@ -27939,12 +28034,31 @@ const ci = (k, n) => {
     return ` (95% CI ${lo.toFixed(1)}–${hi.toFixed(1)}%)`;
 };
 const hasSignal = (r) => r.findings.some((f) => f.kind === 'signal');
+const FINISHED_TEXT = {
+    quota: 'reached the sample size',
+    'no-older-prs': 'all PRs since the start date were checked',
+    'no-more-prs': 'all closed PRs were checked',
+    'page-limit': 'stopped after 4,000 newest closed PRs',
+    error: 'GitHub returned an error',
+};
+function explainRepo(repo, n, st) {
+    if (!st)
+        return n ? '' : 'not measured';
+    const s = st.stats;
+    const parts = [FINISHED_TEXT[st.finished] ?? st.finished];
+    const notFirst = (s.returning_contributor ?? 0) + (s.maintainer ?? 0);
+    if (s.listed)
+        parts.push(`${s.listed} PRs looked at, ${notFirst} by maintainers or returning contributors, ${s.bot ?? 0} by bots`);
+    return parts.join('; ');
+}
 function buildReport(records, meta) {
     const by = (g) => records.filter((r) => r.group === g);
     const lines = [];
     const repos = [...new Set(records.map((r) => r.repo))];
     lines.push('# FairPR benchmark on real pull requests', '');
-    lines.push(`Measured **${records.length}** closed pull requests from **first-time contributors** in ${repos.length} public repositories, created since ${meta.since}.`, '', 'Each PR was checked with FairPR exactly as the GitHub Action would check it, then compared with what the maintainers actually did.', '');
+    const empty = meta.repos.filter((r) => !repos.includes(r));
+    lines.push(`Measured **${records.length}** closed pull requests from **first-time contributors** in ${repos.length} public repositories, created since ${meta.since}.` +
+        (empty.length ? ` (${empty.join(', ')} yielded no measurable PRs; see "By repository".)` : ''), '', 'Each PR was checked with FairPR exactly as the GitHub Action would check it, then compared with what the maintainers actually did.', '');
     // ---- headline
     const merged = by('merged');
     const closed = by('closed-unmerged');
@@ -27986,14 +28100,15 @@ function buildReport(records, meta) {
         lines.push('', 'A useful check fires much more often on rejected PRs than on merged ones.', '');
     }
     // ---- per repo
-    lines.push('## By repository', '', '| Repository | PRs | Merged on hold | Closed on hold |', '|---|---:|---:|---:|');
-    for (const repo of repos) {
+    lines.push('## By repository', '', '| Repository | PRs | Merged on hold | Closed on hold | Sampling |', '|---|---:|---:|---:|---|');
+    const allRepos = [...new Set([...meta.repos, ...repos])];
+    for (const repo of allRepos) {
         const rs = records.filter((r) => r.repo === repo);
         const m = rs.filter((r) => r.group === 'merged');
         const c = rs.filter((r) => r.group !== 'merged');
-        lines.push(`| ${repo} | ${rs.length} | ${pct(q(m), m.length)} (${q(m)}/${m.length}) | ${pct(q(c), c.length)} (${q(c)}/${c.length}) |`);
+        lines.push(`| ${repo} | ${rs.length} | ${pct(q(m), m.length)} (${q(m)}/${m.length}) | ${pct(q(c), c.length)} (${q(c)}/${c.length}) | ${explainRepo(repo, rs.length, meta.state?.[repo])} |`);
     }
-    lines.push('');
+    lines.push('', 'Sample sizes differ because projects receive very different numbers of first-time PRs. Each project was capped at 100 merged and 100 not-merged PRs.', '');
     // ---- review lists
     const list = (title, rs, limit = 40) => {
         if (!rs.length)
@@ -28012,7 +28127,7 @@ function buildReport(records, meta) {
     list('Labeled low-quality PRs that FairPR verified (missed)', labeled.filter((r) => r.verdict === 'verified'));
     list('Examples: closed PRs put on hold', closed.filter((r) => r.verdict === 'quarantine'), 15);
     // ---- method
-    lines.push('## Method and limits', '', `- Repositories: ${meta.repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
+    lines.push('## Method and limits', '', `- Repositories measured: ${repos.join(', ')}.`, '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.', '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.', '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.', '- The "spray" check (many PRs across GitHub in 24 hours) cannot be reconstructed for past PRs and was not measured.', `- Policy used: ai_policy=allowed, max_changed_lines=${meta.policy.max_changed_lines}, max_changed_files=${meta.policy.max_changed_files}, min_description_length=${meta.policy.min_description_length}.`, '- Raw per-PR results are in `results.jsonl` so anyone can re-check them.', '');
     return lines.join('\n');
 }
 function writeReport(records, outDir, meta) {
@@ -28250,6 +28365,9 @@ const hallucinatedImports = {
             const e = (0, files_1.ext)(f.filename);
             const isJs = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'].includes(e);
             const isPy = e === 'py';
+            // Test and build-config files often import test tooling that is not in the main manifest,
+            // so unknown imports there are only shown as notes, never as slop signals.
+            const lenient = (0, files_1.isTestFile)(f.filename) || /^(conftest\.py|SConstruct|SCsub|setup\.py|noxfile\.py)$/.test((0, files_1.basename)(f.filename));
             if (isJs && npm) {
                 looked = true;
                 for (const line of (0, files_1.addedLines)(f)) {
@@ -28257,7 +28375,7 @@ const hallucinatedImports = {
                         const name = (0, imports_1.jsPackageName)(spec, ctx.manifests.jsAliases);
                         const isLocalFolder = !!name && !name.startsWith('@') && !!ctx.manifests.localDirs?.has(name);
                         if (name && !isLocalFolder && !npm.has(name) && !npm.has(`@types/${name}`)) {
-                            unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete });
+                            unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete || lenient });
                         }
                     }
                 }
@@ -28267,7 +28385,7 @@ const hallucinatedImports = {
                 for (const line of (0, files_1.addedLines)(f)) {
                     for (const top of (0, imports_1.pyImports)(line)) {
                         if (!(0, imports_1.pyImportKnown)(top, py, ctx.manifests.pythonLocalModules ?? new Set())) {
-                            unknown.push({ file: f.filename, name: top, incomplete: !!ctx.manifests.pythonIncomplete });
+                            unknown.push({ file: f.filename, name: top, incomplete: !!ctx.manifests.pythonIncomplete || lenient });
                         }
                     }
                 }
@@ -28826,6 +28944,10 @@ function pyImports(line) {
 /** True if the Python import `top` is provided by stdlib, a local module, or a declared dependency. */
 function pyImportKnown(top, deps, localModules) {
     if (PY_STDLIB.has(top) || top.startsWith('_'))
+        return true;
+    // Provided by the build tool / test runner rather than declared as a dependency:
+    // SCons build scripts (Godot), pytest plugins (pytest_homeassistant..., pytest_asyncio...).
+    if (top === 'SCons' || top.startsWith('pytest_'))
         return true;
     if (localModules.has(top) || localModules.has(top.toLowerCase()))
         return true;

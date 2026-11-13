@@ -62,6 +62,7 @@ const server = http.createServer((req, res) => {
     return send(200, url.searchParams.get('page') === '1' ? pulls : []);
   }
   if ((m = p.match(/^\/repos\/o\/r\/pulls\/(\d+)\/files$/))) return send(200, files(+m[1]));
+  if ((m = p.match(/^\/repos\/o\/r\/pulls\/(\d+)$/))) return send(200, pulls.find((x) => x.number === +m[1]));
   if (p === '/repos/o/r/commits') {
     searches.push(url.searchParams.toString());
     return send(200, url.searchParams.get('author') === 'firstmerge' ? [] : [{ sha: 'old' }]);
@@ -116,7 +117,11 @@ try {
   assert.match(report, /\*\*0\.0%\*\* of PRs that were \*\*merged\*\* were put on hold.*n=5/);
   assert.match(report, /95% CI/);
   assert.match(report, /## Method and limits/);
-  console.log('✓ report has headline numbers, confidence intervals and method notes');
+  assert.match(report, /\| Sampling \|/);
+  assert.match(report, /all PRs since the start date were checked/);
+  assert.match(r.log, /looked at \d+ PRs: .*maintainer 1.*returning contributor 1|looked at \d+ PRs: .*bot 1/);
+  assert.ok(fs.existsSync(path.join(out, 'state.json')));
+  console.log('✓ report has headline numbers, confidence intervals, method notes and per-project sampling reasons');
 
   const before = requests + 1; // +1 for the token check
   r = await run(['--repos', 'o/r', '--per-repo', '4', '--out', out, '--since', iso(30).slice(0, 10)]);
@@ -124,6 +129,20 @@ try {
   assert.match(r.log, /already have 9, skipping/);
   assert.ok(requests - before <= 1, 'resumed run must not re-download measured PRs');
   console.log('✓ resumes without re-measuring');
+
+  const before2 = requests;
+  r = await run(['--repos', 'o/r', '--per-repo', '50', '--out', out, '--since', iso(30).slice(0, 10)]);
+  assert.match(r.log, /searched completely before/);
+  assert.ok(requests - before2 <= 1, 'a fully searched project is not scanned again');
+  console.log('✓ does not re-scan projects that were searched completely');
+
+  r = await run(['--repos', 'o/r', '--out', out, '--remeasure', 'unknown-imports']);
+  assert.equal(r.code, 0, r.log);
+  assert.match(r.log, /Re-measuring 3 saved PR\(s\) that had "unknown-imports"/);
+  assert.match(r.log, /Re-measured 3; 0 result\(s\) changed/);
+  const after = fs.readFileSync(path.join(out, 'results.jsonl'), 'utf8').trim().split('\n');
+  assert.equal(after.length, 9, 're-measuring replaces records instead of adding duplicates');
+  console.log('✓ --remeasure re-checks affected PRs in place');
 
   r = await run(['--report-only', '--out', out]);
   assert.equal(r.code, 0, r.log);

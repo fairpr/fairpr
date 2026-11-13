@@ -228,6 +228,9 @@ const hallucinatedImports = {
             const e = (0, files_1.ext)(f.filename);
             const isJs = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'].includes(e);
             const isPy = e === 'py';
+            // Test and build-config files often import test tooling that is not in the main manifest,
+            // so unknown imports there are only shown as notes, never as slop signals.
+            const lenient = (0, files_1.isTestFile)(f.filename) || /^(conftest\.py|SConstruct|SCsub|setup\.py|noxfile\.py)$/.test((0, files_1.basename)(f.filename));
             if (isJs && npm) {
                 looked = true;
                 for (const line of (0, files_1.addedLines)(f)) {
@@ -235,7 +238,7 @@ const hallucinatedImports = {
                         const name = (0, imports_1.jsPackageName)(spec, ctx.manifests.jsAliases);
                         const isLocalFolder = !!name && !name.startsWith('@') && !!ctx.manifests.localDirs?.has(name);
                         if (name && !isLocalFolder && !npm.has(name) && !npm.has(`@types/${name}`)) {
-                            unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete });
+                            unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete || lenient });
                         }
                     }
                 }
@@ -245,7 +248,7 @@ const hallucinatedImports = {
                 for (const line of (0, files_1.addedLines)(f)) {
                     for (const top of (0, imports_1.pyImports)(line)) {
                         if (!(0, imports_1.pyImportKnown)(top, py, ctx.manifests.pythonLocalModules ?? new Set())) {
-                            unknown.push({ file: f.filename, name: top, incomplete: !!ctx.manifests.pythonIncomplete });
+                            unknown.push({ file: f.filename, name: top, incomplete: !!ctx.manifests.pythonIncomplete || lenient });
                         }
                     }
                 }
@@ -630,7 +633,7 @@ const manifests_1 = __nccwpck_require__(8977);
 const proof_1 = __nccwpck_require__(2765);
 const checks_1 = __nccwpck_require__(2369);
 const git_1 = __nccwpck_require__(6094);
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const HELP = `FairPR ${VERSION}: check your pull request against a project's contribution policy before you open it.
 
 Usage:
@@ -1211,6 +1214,10 @@ function pyImports(line) {
 /** True if the Python import `top` is provided by stdlib, a local module, or a declared dependency. */
 function pyImportKnown(top, deps, localModules) {
     if (PY_STDLIB.has(top) || top.startsWith('_'))
+        return true;
+    // Provided by the build tool / test runner rather than declared as a dependency:
+    // SCons build scripts (Godot), pytest plugins (pytest_homeassistant..., pytest_asyncio...).
+    if (top === 'SCons' || top.startsWith('pytest_'))
         return true;
     if (localModules.has(top) || localModules.has(top.toLowerCase()))
         return true;

@@ -232,6 +232,9 @@ const hallucinatedImports: Check = {
       const e = ext(f.filename);
       const isJs = ['js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'mts', 'cts', 'vue', 'svelte'].includes(e);
       const isPy = e === 'py';
+      // Test and build-config files often import test tooling that is not in the main manifest,
+      // so unknown imports there are only shown as notes, never as slop signals.
+      const lenient = isTestFile(f.filename) || /^(conftest\.py|SConstruct|SCsub|setup\.py|noxfile\.py)$/.test(basename(f.filename));
       if (isJs && npm) {
         looked = true;
         for (const line of addedLines(f)) {
@@ -239,7 +242,7 @@ const hallucinatedImports: Check = {
             const name = jsPackageName(spec, ctx.manifests.jsAliases);
             const isLocalFolder = !!name && !name.startsWith('@') && !!ctx.manifests.localDirs?.has(name);
             if (name && !isLocalFolder && !npm.has(name) && !npm.has(`@types/${name}`)) {
-              unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete });
+              unknown.push({ file: f.filename, name, incomplete: !!ctx.manifests.npmIncomplete || lenient });
             }
           }
         }
@@ -249,7 +252,7 @@ const hallucinatedImports: Check = {
         for (const line of addedLines(f)) {
           for (const top of pyImports(line)) {
             if (!pyImportKnown(top, py, ctx.manifests.pythonLocalModules ?? new Set())) {
-              unknown.push({ file: f.filename, name: top, incomplete: !!ctx.manifests.pythonIncomplete });
+              unknown.push({ file: f.filename, name: top, incomplete: !!ctx.manifests.pythonIncomplete || lenient });
             }
           }
         }

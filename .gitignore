@@ -4,5 +4,4 @@ coverage/
 *.log
 .DS_Store
 .cli-build/
-bench-results/
-bench-v2/
+bench-*/

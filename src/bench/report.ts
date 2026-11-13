@@ -43,14 +43,39 @@ const ci = (k: number, n: number) => {
 };
 const hasSignal = (r: BenchRecord) => r.findings.some((f) => f.kind === 'signal');
 
-export function buildReport(records: BenchRecord[], meta: { repos: string[]; since: string; policy: Policy }): string {
+export interface RepoStateLike {
+  finished: string;
+  stats: Record<string, number>;
+}
+type Meta = { repos: string[]; since: string; policy: Policy; state?: Record<string, RepoStateLike> };
+
+const FINISHED_TEXT: Record<string, string> = {
+  quota: 'reached the sample size',
+  'no-older-prs': 'all PRs since the start date were checked',
+  'no-more-prs': 'all closed PRs were checked',
+  'page-limit': 'stopped after 4,000 newest closed PRs',
+  error: 'GitHub returned an error',
+};
+
+function explainRepo(repo: string, n: number, st?: RepoStateLike): string {
+  if (!st) return n ? '' : 'not measured';
+  const s = st.stats;
+  const parts = [FINISHED_TEXT[st.finished] ?? st.finished];
+  const notFirst = (s.returning_contributor ?? 0) + (s.maintainer ?? 0);
+  if (s.listed) parts.push(`${s.listed} PRs looked at, ${notFirst} by maintainers or returning contributors, ${s.bot ?? 0} by bots`);
+  return parts.join('; ');
+}
+
+export function buildReport(records: BenchRecord[], meta: Meta): string {
   const by = (g: Group) => records.filter((r) => r.group === g);
   const lines: string[] = [];
   const repos = [...new Set(records.map((r) => r.repo))];
 
   lines.push('# FairPR benchmark on real pull requests', '');
+  const empty = meta.repos.filter((r) => !repos.includes(r));
   lines.push(
-    `Measured **${records.length}** closed pull requests from **first-time contributors** in ${repos.length} public repositories, created since ${meta.since}.`,
+    `Measured **${records.length}** closed pull requests from **first-time contributors** in ${repos.length} public repositories, created since ${meta.since}.` +
+      (empty.length ? ` (${empty.join(', ')} yielded no measurable PRs; see "By repository".)` : ''),
     '',
     'Each PR was checked with FairPR exactly as the GitHub Action would check it, then compared with what the maintainers actually did.',
     '',
@@ -100,14 +125,15 @@ export function buildReport(records: BenchRecord[], meta: { repos: string[]; sin
   }
 
   // ---- per repo
-  lines.push('## By repository', '', '| Repository | PRs | Merged on hold | Closed on hold |', '|---|---:|---:|---:|');
-  for (const repo of repos) {
+  lines.push('## By repository', '', '| Repository | PRs | Merged on hold | Closed on hold | Sampling |', '|---|---:|---:|---:|---|');
+  const allRepos = [...new Set([...meta.repos, ...repos])];
+  for (const repo of allRepos) {
     const rs = records.filter((r) => r.repo === repo);
     const m = rs.filter((r) => r.group === 'merged');
     const c = rs.filter((r) => r.group !== 'merged');
-    lines.push(`| ${repo} | ${rs.length} | ${pct(q(m), m.length)} (${q(m)}/${m.length}) | ${pct(q(c), c.length)} (${q(c)}/${c.length}) |`);
+    lines.push(`| ${repo} | ${rs.length} | ${pct(q(m), m.length)} (${q(m)}/${m.length}) | ${pct(q(c), c.length)} (${q(c)}/${c.length}) | ${explainRepo(repo, rs.length, meta.state?.[repo])} |`);
   }
-  lines.push('');
+  lines.push('', 'Sample sizes differ because projects receive very different numbers of first-time PRs. Each project was capped at 100 merged and 100 not-merged PRs.', '');
 
   // ---- review lists
   const list = (title: string, rs: BenchRecord[], limit = 40) => {
@@ -129,7 +155,7 @@ export function buildReport(records: BenchRecord[], meta: { repos: string[]; sin
   lines.push(
     '## Method and limits',
     '',
-    `- Repositories: ${meta.repos.join(', ')}.`,
+    `- Repositories measured: ${repos.join(', ')}.`,
     '- Sample: the most recent closed PRs per repository whose author had no previous merged contribution there (GitHub "first-time contributor" or "none"), excluding bots and drafts.',
     '- "Closed without merging" includes many reasonable PRs (duplicates, stale, superseded), so its on-hold rate is not a precision score. The merged group is the fair measure of false alarms.',
     '- GitHub reports the author\'s *current* relationship to the repo. Merged PRs from authors now shown as "contributor" were counted when the commit history of the project showed no earlier commit by them.',
@@ -141,7 +167,7 @@ export function buildReport(records: BenchRecord[], meta: { repos: string[]; sin
   return lines.join('\n');
 }
 
-export function writeReport(records: BenchRecord[], outDir: string, meta: { repos: string[]; since: string; policy: Policy }): string {
+export function writeReport(records: BenchRecord[], outDir: string, meta: Meta): string {
   const p = path.join(outDir, 'REPORT.md');
   fs.writeFileSync(p, buildReport(records, meta));
   return p;

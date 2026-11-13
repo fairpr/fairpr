@@ -262,3 +262,20 @@ describe('false alarms found by the benchmark', () => {
     expect(f?.detail).not.toContain('freezegun');
   });
 });
+
+describe('false alarms found by benchmark v2', () => {
+  it('knows SCons build scripts and pytest plugins', () => {
+    expect(pyImportKnown('SCons', new Set(), new Set())).toBe(true);
+    expect(pyImportKnown('pytest_homeassistant', new Set(), new Set())).toBe(true);
+  });
+  it('reports unknown imports in test files only as a note', () => {
+    const files = [file('tests/components/vesync/conftest.py', ['import some_test_helper_pkg'])];
+    const r = evaluate(ctx({ files, manifests: { python: new Set(['requests']) } }), policy());
+    expect(r.findings.find((f) => f.id === 'unknown-imports')?.kind).toBe('hint');
+  });
+  it('still flags unknown imports in normal source files', () => {
+    const files = [file('app/service.py', ['import totally_made_up_sdk'])];
+    const r = evaluate(ctx({ files, manifests: { python: new Set(['requests']) } }), policy());
+    expect(r.findings.find((f) => f.id === 'unknown-imports')?.kind).toBe('signal');
+  });
+});

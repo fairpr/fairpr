@@ -119,6 +119,9 @@ export function pyImports(line: string): string[] {
 /** True if the Python import `top` is provided by stdlib, a local module, or a declared dependency. */
 export function pyImportKnown(top: string, deps: Set<string>, localModules: Set<string>): boolean {
   if (PY_STDLIB.has(top) || top.startsWith('_')) return true;
+  // Provided by the build tool / test runner rather than declared as a dependency:
+  // SCons build scripts (Godot), pytest plugins (pytest_homeassistant..., pytest_asyncio...).
+  if (top === 'SCons' || top.startsWith('pytest_')) return true;
   if (localModules.has(top) || localModules.has(top.toLowerCase())) return true;
   const n = normalizePy(top);
   const aliases = PY_ALIASES[top.toLowerCase()] ?? [];
