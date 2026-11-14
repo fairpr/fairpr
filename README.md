@@ -1,5 +1,7 @@
 # FairPR
 
+[![Marketplace](https://img.shields.io/badge/GitHub%20Marketplace-FairPR-green?logo=github)](https://github.com/marketplace/actions/fairpr) [![npm](https://img.shields.io/npm/v/fairpr)](https://www.npmjs.com/package/fairpr) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **Stop AI-slop pull requests without punishing honest contributors.**
 
 Maintainers are drowning in AI-generated PRs that look polished but don't work. Most tools answer by auto-closing PRs, which also drives away real newcomers. FairPR works on **both sides**:
@@ -18,8 +20,6 @@ Maintainers are drowning in AI-generated PRs that look polished but don't work. 
 - 💬 **Explains exactly what to fix** in one friendly comment that updates itself
 - ⏸️ **Never auto-closes.** Suspicious PRs are put *on hold* with a label, and a maintainer decides
 - 🔒 **Safe by design.** It never runs PR code, reads your policy from the default branch only, and stores no data
-
-<!-- TODO before launch: replace with a 20-second GIF of a real PR getting a FairPR comment -->
 
 ## Quick start (2 minutes)
 
